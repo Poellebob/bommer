@@ -9,6 +9,10 @@ observe X.509 certificates, and import trusted CBOM artifacts. Hardware collecti
 requires an external collector; source-code cryptography scanner integration is
 a deferred proof of concept, not implemented.
 
+> [!WARNING]
+> Most and if not all of this early code is written by AI.
+> I will go over all of it by hand and rewrite/audit it but as of now it is just a proof of concept.
+
 ## Quick Start
 
 You need Git, [Nix](https://nixos.org/download/) with flakes enabled.
