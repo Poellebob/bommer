@@ -17,12 +17,18 @@ applications: []
 # Example application (replace applications: [] above):
 # applications:
 #   - name: payments
+#     version: 1.0.0
 #     target:
 #       type: directory
 #       path: /srv/payments
 #     sbom:
 #       enabled: true
 #       backend: syft
+#       respect_gitignore: true
+#       exclude:
+#         - "./.git/**"
+#         - "./dist/**"
+#         - "./results/**"
 #     cbom:
 #       enabled: true
 #       backend: command

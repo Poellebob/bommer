@@ -97,6 +97,7 @@ func TestExecuteArtifacts(t *testing.T) {
 	}
 	job := shellJob(t, "app", "[ \"$1\" = \"$2\" ]\nprintf 'diagnostic\\n' >&2\ncat \"$3\"\n", "{target}", target, fixture)
 	job.Target = target
+	job.Version = "1.2.3"
 	dir, failed, err := Execute(context.Background(), []collect.Job{job}, output, time.Second, "test-version")
 	if err != nil || failed {
 		t.Fatalf("Execute() = %q, %v, %v", dir, failed, err)
@@ -110,6 +111,9 @@ func TestExecuteArtifacts(t *testing.T) {
 		t.Fatalf("unexpected manifest: %+v", manifest)
 	}
 	result := manifest.Results[0]
+	if result.SourceVersion != "1.2.3" {
+		t.Fatalf("source version = %q, want 1.2.3", result.SourceVersion)
+	}
 	if result.Name != "app" || result.Kind != "sbom" || result.Target != target ||
 		result.Backend != "command" || result.Status != "collected" || result.Error != "" ||
 		result.Artifact != "app.sbom.cdx.json" {

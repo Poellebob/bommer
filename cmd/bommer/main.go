@@ -69,7 +69,13 @@ func cli(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if command == "doctor" {
 		exitCode := 0
 		for _, job := range jobs {
-			if err := job.Check(); err != nil {
+			err := job.Check()
+			if err == nil {
+				checkContext, cancel := context.WithTimeout(ctx, 10*time.Second)
+				_, err = job.Resolve(checkContext)
+				cancel()
+			}
+			if err != nil {
 				fmt.Fprintf(out, "FAIL %s/%s: %v\n", job.Name, job.Kind, err)
 				exitCode = 1
 			} else {

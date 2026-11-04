@@ -22,7 +22,7 @@
         ldflags = [ "-s" "-w" "-X main.version=0.1.0-dev" ];
         nativeBuildInputs = [ pkgs.makeWrapper ];
         postInstall = ''
-          wrapProgram $out/bin/bommer --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.syft ]}
+          wrapProgram $out/bin/bommer --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.syft pkgs.gitMinimal ]}
         '';
         meta = {
           description = "Configurable HBOM, SBOM, and application CBOM orchestration";

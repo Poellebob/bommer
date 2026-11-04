@@ -19,6 +19,9 @@ images before release; update deliberately. NixOS has no LTS channel.
   cancellation, output locking, private artifacts, hashes, run manifests.
 - Implemented adapters: Syft SBOM and cdxgen hbom. These still need live-host
   integration testing and version pinning.
+- Implemented Syft scope controls: explicit exclusions, opt-in Git ignore
+  evaluation, application name/version metadata, and effective exclusions in
+  manifests. Integration fixtures verify negation and literal path escaping.
 - Implemented escape hatch: explicitly configured external command collectors
   producing CycloneDX JSON on stdout, including application CBOM and Nix-aware
   collectors. No automatic backend downloads or shell expansion.

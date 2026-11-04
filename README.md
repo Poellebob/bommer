@@ -62,12 +62,54 @@ configured Nix-aware command collector. Nix on Debian/RPM hosts also requires
 separate explicit scopes; conventional package discovery is not a Nix closure.
 There is not yet a built-in verified Nix or CBOM collector.
 
+### Source Scan Scope
+
+Application Syft scans use the configured application `name` as source metadata.
+An optional application `version` sets `--source-version`; it is not inferred
+from Bommer's own version or Git tags.
+
+```yaml
+applications:
+  - name: payments
+    version: 1.0.0
+    target:
+      type: directory
+      path: /srv/payments
+    sbom:
+      enabled: true
+      backend: syft
+      respect_gitignore: true
+      exclude:
+        - "./.devenv/**"
+        - "./dist/**"
+        - "./results/**"
+```
+
+`exclude` accepts Syft glob patterns relative to the scan root, passed literally
+as separate arguments. There are no automatic build-directory exclusions.
+`respect_gitignore` is opt-in and only supported for application directory scans
+using Syft. Git must be installed and the target must be in a Git working tree.
+Bommer asks Git for ignored paths, respecting nested `.gitignore` files,
+negations, `.git/info/exclude`, and the user's global Git ignores. Tracked files
+remain included even when matching an ignore rule. Git metadata is excluded too.
+Explicit exclusions still take precedence over paths re-included by Git rules.
+
+Git ignore evaluation happens before scanning; newly created ignored paths during
+the scan are not guaranteed to be excluded. Use explicit directory exclusions
+for concurrently changing caches and result locations. Large numbers of
+individually ignored files can exceed the OS argument limit: prefer directory
+ignore rules for caches. Exclusions are not a security sandbox or a secret filter.
+They apply to traversal, not necessarily every dependency referenced by an
+included manifest; source inventories can still include test dependencies.
+
 ## Results
 
 Each scan creates a private unique run directory with separate `.cdx.json`
 documents, stderr logs, and a `manifest.json` containing timestamps, backends,
 target scopes, artifact SHA-256 hashes, and per-job status. A failed job does not
 discard other jobs' valid results. Only one scan per output directory may run.
+The manifest also records application versions, whether Git ignores were enabled,
+and the effective exclusions (explicit patterns plus resolved ignored paths).
 
 Currently output is checked for JSON structure, CycloneDX 1.6/1.7 identifiers,
 positive document version, and nonempty components. **This is not full schema
@@ -94,7 +136,7 @@ just rpm
 Native package recipes default to version `0.1.0-dev`; override it with, for
 example, `VERSION=0.1.0 just deb`. They build the CLI before packaging it.
 
-The flake wraps Bommer with Syft. Native packages currently contain the CLI,
+The flake wraps Bommer with Syft and Git. Native packages currently contain the CLI,
 disabled example configuration, and systemd units, **not collector binaries**;
 provision those explicitly. Native binaries use `CGO_ENABLED=0`, not a copied
 Nix-linked executable. Packages do not enable or start scanning on installation.

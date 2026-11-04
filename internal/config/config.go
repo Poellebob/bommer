@@ -11,9 +11,11 @@ import (
 )
 
 type Collector struct {
-	Enabled bool     `yaml:"enabled"`
-	Backend string   `yaml:"backend"`
-	Command []string `yaml:"command"`
+	Enabled          bool     `yaml:"enabled"`
+	Backend          string   `yaml:"backend"`
+	Command          []string `yaml:"command"`
+	Exclude          []string `yaml:"exclude"`
+	RespectGitignore bool     `yaml:"respect_gitignore"`
 }
 
 type Target struct {
@@ -23,10 +25,11 @@ type Target struct {
 }
 
 type Application struct {
-	Name   string    `yaml:"name"`
-	Target Target    `yaml:"target"`
-	SBOM   Collector `yaml:"sbom"`
-	CBOM   Collector `yaml:"cbom"`
+	Name    string    `yaml:"name"`
+	Version string    `yaml:"version"`
+	Target  Target    `yaml:"target"`
+	SBOM    Collector `yaml:"sbom"`
+	CBOM    Collector `yaml:"cbom"`
 }
 
 type Config struct {
@@ -88,6 +91,9 @@ func (cfg Config) Validate() error {
 	if err := validateCollector(cfg.Host.SBOM, "sbom"); err != nil {
 		return fmt.Errorf("host.sbom: %w", err)
 	}
+	if cfg.Host.SBOM.Enabled && cfg.Host.SBOM.RespectGitignore {
+		return fmt.Errorf("host.sbom: respect_gitignore is only supported for application directories")
+	}
 
 	seenNames := map[string]bool{"host": true}
 	for _, app := range cfg.Applications {
@@ -115,6 +121,9 @@ func (cfg Config) Validate() error {
 		if err := validateCollector(app.CBOM, "cbom"); err != nil {
 			return fmt.Errorf("application %s cbom: %w", app.Name, err)
 		}
+		if app.SBOM.Enabled && app.SBOM.RespectGitignore && app.Target.Type != "directory" {
+			return fmt.Errorf("application %s: respect_gitignore requires a directory target", app.Name)
+		}
 	}
 	return nil
 }
@@ -122,6 +131,14 @@ func (cfg Config) Validate() error {
 func validateCollector(collector Collector, kind string) error {
 	if !collector.Enabled {
 		return nil
+	}
+	if (len(collector.Exclude) > 0 || collector.RespectGitignore) && (kind != "sbom" || collector.Backend != "syft") {
+		return fmt.Errorf("exclude and respect_gitignore require the syft SBOM backend")
+	}
+	for _, pattern := range collector.Exclude {
+		if pattern == "" {
+			return fmt.Errorf("exclude patterns must not be empty")
+		}
 	}
 
 	if collector.Backend == "command" {

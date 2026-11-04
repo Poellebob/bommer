@@ -17,16 +17,19 @@ import (
 )
 
 type Result struct {
-	Name     string    `json:"name"`
-	Kind     string    `json:"kind"`
-	Target   string    `json:"target,omitempty"`
-	Backend  string    `json:"backend"`
-	Status   string    `json:"status"`
-	Artifact string    `json:"artifact,omitempty"`
-	SHA256   string    `json:"sha256,omitempty"`
-	Error    string    `json:"error,omitempty"`
-	Started  time.Time `json:"started"`
-	Finished time.Time `json:"finished"`
+	Name             string    `json:"name"`
+	Kind             string    `json:"kind"`
+	Target           string    `json:"target,omitempty"`
+	SourceVersion    string    `json:"sourceVersion,omitempty"`
+	Exclude          []string  `json:"exclude,omitempty"`
+	RespectGitignore bool      `json:"respectGitignore,omitempty"`
+	Backend          string    `json:"backend"`
+	Status           string    `json:"status"`
+	Artifact         string    `json:"artifact,omitempty"`
+	SHA256           string    `json:"sha256,omitempty"`
+	Error            string    `json:"error,omitempty"`
+	Started          time.Time `json:"started"`
+	Finished         time.Time `json:"finished"`
 }
 
 type Manifest struct {
@@ -100,12 +103,15 @@ func Execute(ctx context.Context, jobs []collect.Job, output string, timeout tim
 	failed := false
 	for _, job := range jobs {
 		result := Result{
-			Name:    job.Name,
-			Kind:    job.Kind,
-			Target:  job.Target,
-			Backend: job.Collector.Backend,
-			Status:  "failed",
-			Started: time.Now().UTC(),
+			Name:             job.Name,
+			Kind:             job.Kind,
+			Target:           job.Target,
+			SourceVersion:    job.Version,
+			Exclude:          job.Collector.Exclude,
+			RespectGitignore: job.Collector.RespectGitignore,
+			Backend:          job.Collector.Backend,
+			Status:           "failed",
+			Started:          time.Now().UTC(),
 		}
 
 		err := ctx.Err()
@@ -153,6 +159,11 @@ func executeJob(ctx context.Context, job collect.Job, runDirectory string, timeo
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	job, err = job.Resolve(ctx)
+	if err != nil {
+		return err
+	}
+	result.Exclude = job.Collector.Exclude
 	args := job.Command()
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 

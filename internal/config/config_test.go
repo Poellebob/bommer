@@ -197,3 +197,51 @@ func TestBackendCapabilities(t *testing.T) {
 		}
 	}
 }
+
+func TestScanOptions(t *testing.T) {
+	for _, tt := range []struct {
+		name             string
+		backend          string
+		kind             string
+		targetType       string
+		exclude          []string
+		respectGitignore bool
+		valid            bool
+	}{
+		{"directory ignores", "syft", "sbom", "directory", []string{"./dist/**"}, true, true},
+		{"container exclusions", "syft", "sbom", "container", []string{"/tmp/**"}, false, true},
+		{"container ignores", "syft", "sbom", "container", nil, true, false},
+		{"command exclusions", "command", "sbom", "directory", []string{"dist"}, false, false},
+		{"command ignores", "command", "cbom", "directory", nil, true, false},
+		{"empty exclusion", "syft", "sbom", "directory", []string{""}, false, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testConfig()
+			app := Application{Name: "app", Version: "1.2.3", Target: Target{Type: tt.targetType}}
+			if tt.targetType == "container" {
+				app.Target.Image = "example/app:v1"
+			} else {
+				app.Target.Path = "/app"
+			}
+			collector := Collector{Enabled: true, Backend: tt.backend, Exclude: tt.exclude, RespectGitignore: tt.respectGitignore}
+			if tt.backend == "command" {
+				collector.Command = []string{"scanner"}
+			}
+			if tt.kind == "cbom" {
+				app.CBOM = collector
+			} else {
+				app.SBOM = collector
+			}
+			cfg.Applications = []Application{app}
+			if err := cfg.Validate(); (err == nil) != tt.valid {
+				t.Fatalf("Validate() = %v, valid = %v", err, tt.valid)
+			}
+		})
+	}
+
+	cfg := testConfig()
+	cfg.Host.SBOM = Collector{Enabled: true, Backend: "syft", RespectGitignore: true}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("host Git ignores must be rejected")
+	}
+}
