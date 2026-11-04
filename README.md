@@ -11,21 +11,19 @@ a deferred proof of concept, not implemented.
 
 ## Quick Start
 
-You need Git, [Nix](https://nixos.org/download/), and
-[devenv](https://devenv.sh/getting-started/). Enable Nix flakes.
+You need Git, [Nix](https://nixos.org/download/) with flakes enabled.
+> deb and rpm is being worked on.
 
 ```sh
 git clone https://codeberg.org/Poellebob/bommer.git
 cd bommer
-devenv shell
-just build
 ```
 
 Run a software inventory of this checkout using the supplied test configuration:
 
 ```sh
-./dist/bommer doctor --config examples/quickstart.yaml
-./dist/bommer scan --config examples/quickstart.yaml
+nix run . --  doctor --config examples/quickstart.yaml
+nix run . -- scan --config examples/quickstart.yaml
 ```
 
 Run these commands from the repository root. The configuration respects Git
@@ -36,19 +34,10 @@ and a version 2 manifest describing the run. CycloneDX 1.6/1.7 JSON is validated
 against embedded schemas offline; schema validity does not prove inventory
 completeness. Partial results are retained but cause exit code `1`.
 
-With Nix alone, you can also run the same scan without building manually:
-
-```sh
-nix run . -- scan --config examples/quickstart.yaml
-```
-
-## Run From Codeberg
-
-```sh
-nix run 'git+https://codeberg.org/Poellebob/bommer.git?ref=devel/master' -- --help
-```
-
 ## Development
+
+For development i strongly recommend using [devenv](https://devenv.sh/getting-started/),
+as it is the only ting used for environment management in this repo.
 
 Inside `devenv shell`, use `just` for recipes:
 
