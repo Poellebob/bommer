@@ -1,0 +1,62 @@
+# Site-specific template, not a ready-to-run scan. Replace paths and remove
+# inventories you do not want. Nothing discovers roots or scans all /nix/store.
+version: 1
+timeout: 10m
+output:
+  directory: ./results
+
+# Legacy host.hbom and host.sbom can coexist with these named inventories.
+host:
+  inventories:
+    - name: selected-profile
+      kind: sbom
+      collector:
+        enabled: true
+        backend: nix
+        nix:
+          # Required for host Nix: an existing absolute local closure root.
+          roots: [/nix/var/nix/profiles/example]
+    - name: public-certificates
+      kind: cbom
+      collector:
+        enabled: true
+        backend: certificates
+        certificates:
+          # Host paths must be absolute; no symlink components are followed.
+          paths: [/etc/example/certificates]
+          max_file_bytes: 4194304 # Default 4 MiB; maximum 67108864 (64 MiB).
+          include_identity: false # Default; opt in to subject/issuer names.
+
+applications:
+  - name: example
+    target:
+      type: directory
+      path: /srv/example
+    inventories:
+      - name: public-certificates
+        kind: cbom
+        collector:
+          enabled: true
+          backend: certificates
+          certificates:
+            paths: [certificates] # Relative to /srv/example, not this YAML file.
+      - name: reviewed-ci-artifact
+        kind: cbom
+        collector:
+          enabled: true
+          backend: import
+          import:
+            # Trusted existing CBOM, regular file <=64 MiB. Bytes/source hash
+            # preserved; no local discovery or application-association proof.
+            path: /srv/ci-artifacts/example.cbom.cdx.json
+  - name: deployed-example
+    target:
+      type: nix-closure
+      path: /nix/var/nix/profiles/example
+    inventories:
+      - name: closure
+        kind: sbom
+        collector:
+          enabled: true
+          backend: nix
+          # nix.roots may override the default root from target.path.

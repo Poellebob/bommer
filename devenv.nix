@@ -6,6 +6,7 @@
     just
     syft
     nfpm
+    nix
   ];
 
   enterTest = "just test";

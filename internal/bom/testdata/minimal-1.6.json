@@ -1,0 +1,26 @@
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "version": 1,
+  "metadata": {
+    "component": {"type": "application", "name": "example-service"}
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "example-crypto-library",
+      "licenses": [{"license": {"id": "Apache-2.0"}}],
+      "components": [
+        {
+          "type": "cryptographic-asset",
+          "name": "AES-128-GCM",
+          "cryptoProperties": {
+            "assetType": "algorithm",
+            "algorithmProperties": {"primitive": "ae", "parameterSetIdentifier": "128"}
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -60,12 +60,13 @@ func TestCLIUsage(t *testing.T) {
 		code    int
 		message string
 	}{
-		{"no command", nil, 2, "usage:"},
 		{"unknown command", []string{"unknown"}, 2, "unknown command"},
 		{"unknown flag", []string{"scan", "--unknown"}, 2, "flag provided but not defined"},
 		{"missing flag value", []string{"scan", "--config"}, 2, "flag needs an argument"},
 		{"positional argument", []string{"scan", "unexpected"}, 2, "unexpected positional arguments"},
-		{"help", []string{"scan", "--help"}, 0, "Usage of scan:"},
+		{"unknown help command", []string{"help", "unknown"}, 2, "unknown command"},
+		{"extra help arguments", []string{"help", "scan", "extra"}, 2, "usage: bommer help"},
+		{"extra version arguments", []string{"version", "extra"}, 2, "usage: bommer version"},
 		{"missing config", []string{"scan", "--config", filepath.Join(t.TempDir(), "missing")}, 2, "no such file"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -83,6 +84,44 @@ func TestCLIUsage(t *testing.T) {
 			t.Fatalf("version: stdout %q, stderr %q, code %d", out.String(), errOut.String(), code)
 		}
 	})
+}
+
+func TestCLIHelp(t *testing.T) {
+	for _, testCase := range []struct {
+		name         string
+		arguments    []string
+		expectedText []string
+	}{
+		{"no arguments", nil, []string{"usage: bommer", "doctor", "scan", "version", "Examples:"}},
+		{"long option", []string{"--help"}, []string{"usage: bommer", "Commands:", "--config"}},
+		{"short option", []string{"-h"}, []string{"usage: bommer", "Commands:"}},
+		{"help command", []string{"help"}, []string{"usage: bommer", "Commands:"}},
+		{"scan long option", []string{"scan", "--help"}, []string{"usage: bommer scan", "Collect the inventories", "-config", "-only", "-application"}},
+		{"scan short option", []string{"scan", "-h"}, []string{"usage: bommer scan", "Options:"}},
+		{"scan help topic", []string{"help", "scan"}, []string{"usage: bommer scan", "-config"}},
+		{"doctor help topic", []string{"help", "doctor"}, []string{"usage: bommer doctor", "without scanning"}},
+		{"doctor option", []string{"doctor", "--help"}, []string{"usage: bommer doctor", "without scanning"}},
+		{"version help topic", []string{"help", "version"}, []string{"usage: bommer version", "Print the Bommer version"}},
+		{"help ignores missing config", []string{"scan", "--config", "/missing/config.yaml", "--help"}, []string{"usage: bommer scan"}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var output, errorOutput bytes.Buffer
+			exitCode := cli(context.Background(), testCase.arguments, &output, &errorOutput)
+			if exitCode != 0 || errorOutput.Len() != 0 {
+				t.Fatalf("help returned %d with stderr %q", exitCode, errorOutput.String())
+			}
+			for _, text := range testCase.expectedText {
+				if !strings.Contains(output.String(), text) {
+					t.Errorf("help missing %q: %s", text, output.String())
+				}
+			}
+			if len(testCase.arguments) == 0 || (len(testCase.arguments) == 1) {
+				if output.String() != overviewHelp {
+					t.Error("top-level help differs between entry points")
+				}
+			}
+		})
+	}
 }
 
 func TestCLISelectionErrors(t *testing.T) {

@@ -124,6 +124,15 @@ func TestSyftMetadataAndExclusions(t *testing.T) {
 	}
 }
 
+func TestCertificateTargetParentTraversal(t *testing.T) {
+	for _, target := range []string{"/srv/link/../app", "../app", "app/.."} {
+		job := Job{Name: "app", Target: target, TargetType: "directory", Collector: config.Collector{Backend: "certificates"}}
+		if _, err := job.Resolve(context.Background()); err == nil {
+			t.Errorf("accepted certificate target %q", target)
+		}
+	}
+}
+
 func TestResolveGitignore(t *testing.T) {
 	root := t.TempDir()
 	git := func(args ...string) {

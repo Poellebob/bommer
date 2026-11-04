@@ -106,7 +106,7 @@ func TestExecuteArtifacts(t *testing.T) {
 		t.Fatalf("run directory %q not under %q", dir, output)
 	}
 	manifest := readManifest(t, dir)
-	if manifest.Version != 1 || manifest.BommerVersion != "test-version" ||
+	if manifest.Version != 2 || manifest.BommerVersion != "test-version" ||
 		manifest.Validation == "" || len(manifest.Results) != 1 {
 		t.Fatalf("unexpected manifest: %+v", manifest)
 	}

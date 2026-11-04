@@ -20,6 +20,14 @@ vet:
 test:
     go test -race ./...
 
+# Test embedded CycloneDX schemas, fixtures, and offline validation.
+schema-test:
+    go test -race ./internal/bom
+
+# Run integration fixtures; live Nix requires an explicit BOMMER_TEST_NIX_ROOT.
+integration-test:
+    go test -race -count=1 -v -run 'Test.*Integration|^TestNixLive$' ./...
+
 # Run all source checks and tests.
 check: fmt-check vet test
 

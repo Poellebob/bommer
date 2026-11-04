@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"time"
 
@@ -11,11 +12,34 @@ import (
 )
 
 type Collector struct {
-	Enabled          bool     `yaml:"enabled"`
-	Backend          string   `yaml:"backend"`
-	Command          []string `yaml:"command"`
-	Exclude          []string `yaml:"exclude"`
-	RespectGitignore bool     `yaml:"respect_gitignore"`
+	Enabled          bool                `yaml:"enabled"`
+	Backend          string              `yaml:"backend"`
+	Command          []string            `yaml:"command"`
+	Exclude          []string            `yaml:"exclude"`
+	RespectGitignore bool                `yaml:"respect_gitignore"`
+	Nix              *NixOptions         `yaml:"nix"`
+	Certificates     *CertificateOptions `yaml:"certificates"`
+	Import           *ImportOptions      `yaml:"import"`
+}
+
+type NixOptions struct {
+	Roots []string `yaml:"roots"`
+}
+
+type CertificateOptions struct {
+	Paths           []string `yaml:"paths"`
+	MaxFileBytes    int64    `yaml:"max_file_bytes"`
+	IncludeIdentity bool     `yaml:"include_identity"`
+}
+
+type ImportOptions struct {
+	Path string `yaml:"path"`
+}
+
+type Inventory struct {
+	Name      string    `yaml:"name"`
+	Kind      string    `yaml:"kind"`
+	Collector Collector `yaml:"collector"`
 }
 
 type Target struct {
@@ -25,11 +49,12 @@ type Target struct {
 }
 
 type Application struct {
-	Name    string    `yaml:"name"`
-	Version string    `yaml:"version"`
-	Target  Target    `yaml:"target"`
-	SBOM    Collector `yaml:"sbom"`
-	CBOM    Collector `yaml:"cbom"`
+	Name        string      `yaml:"name"`
+	Version     string      `yaml:"version"`
+	Target      Target      `yaml:"target"`
+	SBOM        Collector   `yaml:"sbom"`
+	CBOM        Collector   `yaml:"cbom"`
+	Inventories []Inventory `yaml:"inventories"`
 }
 
 type Config struct {
@@ -39,8 +64,9 @@ type Config struct {
 	} `yaml:"output"`
 	Timeout string `yaml:"timeout"`
 	Host    struct {
-		HBOM Collector `yaml:"hbom"`
-		SBOM Collector `yaml:"sbom"`
+		HBOM        Collector   `yaml:"hbom"`
+		SBOM        Collector   `yaml:"sbom"`
+		Inventories []Inventory `yaml:"inventories"`
 	} `yaml:"host"`
 	Applications []Application `yaml:"applications"`
 }
@@ -85,14 +111,14 @@ func (cfg Config) Validate() error {
 		return fmt.Errorf("timeout must be a positive duration")
 	}
 
-	if err := validateCollector(cfg.Host.HBOM, "hbom"); err != nil {
+	if err := validateScope(cfg.Host.HBOM, "hbom", "", true); err != nil {
 		return fmt.Errorf("host.hbom: %w", err)
 	}
-	if err := validateCollector(cfg.Host.SBOM, "sbom"); err != nil {
+	if err := validateScope(cfg.Host.SBOM, "sbom", "", true); err != nil {
 		return fmt.Errorf("host.sbom: %w", err)
 	}
-	if cfg.Host.SBOM.Enabled && cfg.Host.SBOM.RespectGitignore {
-		return fmt.Errorf("host.sbom: respect_gitignore is only supported for application directories")
+	if err := validateInventories(cfg.Host.Inventories, "", true); err != nil {
+		return fmt.Errorf("host.inventories: %w", err)
 	}
 
 	seenNames := map[string]bool{"host": true}
@@ -103,7 +129,7 @@ func (cfg Config) Validate() error {
 		seenNames[app.Name] = true
 
 		switch app.Target.Type {
-		case "directory":
+		case "directory", "nix-closure":
 			if app.Target.Path == "" || app.Target.Image != "" {
 				return fmt.Errorf("application %s requires target.path and no target.image", app.Name)
 			}
@@ -112,18 +138,69 @@ func (cfg Config) Validate() error {
 				return fmt.Errorf("application %s requires target.image and no target.path", app.Name)
 			}
 		default:
-			return fmt.Errorf("application %s: target.type must be directory or container", app.Name)
+			return fmt.Errorf("application %s: target.type must be directory, container, or nix-closure", app.Name)
 		}
 
-		if err := validateCollector(app.SBOM, "sbom"); err != nil {
+		if err := validateScope(app.SBOM, "sbom", app.Target.Type, false); err != nil {
 			return fmt.Errorf("application %s sbom: %w", app.Name, err)
 		}
-		if err := validateCollector(app.CBOM, "cbom"); err != nil {
+		if err := validateScope(app.CBOM, "cbom", app.Target.Type, false); err != nil {
 			return fmt.Errorf("application %s cbom: %w", app.Name, err)
 		}
-		if app.SBOM.Enabled && app.SBOM.RespectGitignore && app.Target.Type != "directory" {
-			return fmt.Errorf("application %s: respect_gitignore requires a directory target", app.Name)
+		if err := validateInventories(app.Inventories, app.Target.Type, false); err != nil {
+			return fmt.Errorf("application %s inventories: %w", app.Name, err)
 		}
+	}
+	return nil
+}
+
+func validateInventories(inventories []Inventory, targetType string, host bool) error {
+	seen := map[string]bool{}
+	for _, inventory := range inventories {
+		if !namePattern.MatchString(inventory.Name) || seen[inventory.Name] {
+			return fmt.Errorf("inventory name %q must be unique and filename-safe", inventory.Name)
+		}
+		seen[inventory.Name] = true
+		if inventory.Kind != "hbom" && inventory.Kind != "sbom" && inventory.Kind != "cbom" {
+			return fmt.Errorf("inventory %s kind must be hbom, sbom, or cbom", inventory.Name)
+		}
+		if err := validateScope(inventory.Collector, inventory.Kind, targetType, host); err != nil {
+			return fmt.Errorf("inventory %s: %w", inventory.Name, err)
+		}
+	}
+	return nil
+}
+
+func validateScope(collector Collector, kind, targetType string, host bool) error {
+	if err := validateCollector(collector, kind); err != nil || !collector.Enabled {
+		return err
+	}
+	if collector.RespectGitignore && (host || targetType != "directory") {
+		return fmt.Errorf("respect_gitignore is only supported for application directories")
+	}
+	if collector.Backend == "hbom" && !host {
+		return fmt.Errorf("hbom requires a host inventory")
+	}
+	if collector.Backend == "nix" {
+		if !host && targetType != "nix-closure" {
+			return fmt.Errorf("nix requires a nix-closure application target")
+		}
+		if host && (collector.Nix == nil || len(collector.Nix.Roots) == 0) {
+			return fmt.Errorf("host nix inventory requires nix.roots")
+		}
+	}
+	if collector.Backend == "certificates" {
+		if targetType == "container" {
+			return fmt.Errorf("certificates requires local paths, not a container target")
+		}
+		for _, path := range collector.Certificates.Paths {
+			if host && !filepath.IsAbs(path) {
+				return fmt.Errorf("host certificate paths must be absolute")
+			}
+		}
+	}
+	if targetType == "nix-closure" && collector.Backend != "nix" && collector.Backend != "certificates" && collector.Backend != "import" {
+		return fmt.Errorf("nix-closure targets require nix, certificates, or import backends")
 	}
 	return nil
 }
@@ -131,6 +208,11 @@ func (cfg Config) Validate() error {
 func validateCollector(collector Collector, kind string) error {
 	if !collector.Enabled {
 		return nil
+	}
+	if (collector.Nix != nil && collector.Backend != "nix") ||
+		(collector.Certificates != nil && collector.Backend != "certificates") ||
+		(collector.Import != nil && collector.Backend != "import") {
+		return fmt.Errorf("backend-specific options must match the selected backend")
 	}
 	if (len(collector.Exclude) > 0 || collector.RespectGitignore) && (kind != "sbom" || collector.Backend != "syft") {
 		return fmt.Errorf("exclude and respect_gitignore require the syft SBOM backend")
@@ -150,6 +232,37 @@ func validateCollector(collector Collector, kind string) error {
 
 	if len(collector.Command) > 0 {
 		return fmt.Errorf("command is only allowed with backend: command")
+	}
+	if kind == "sbom" && collector.Backend == "nix" {
+		if collector.Nix != nil {
+			for _, root := range collector.Nix.Roots {
+				if !filepath.IsAbs(root) {
+					return fmt.Errorf("nix.roots must contain absolute local paths")
+				}
+			}
+		}
+		return nil
+	}
+	if kind == "cbom" && collector.Backend == "certificates" {
+		options := collector.Certificates
+		if options == nil || len(options.Paths) == 0 {
+			return fmt.Errorf("certificates.paths is required")
+		}
+		for _, path := range options.Paths {
+			if path == "" {
+				return fmt.Errorf("certificate paths must not be empty")
+			}
+		}
+		if options.MaxFileBytes < 0 || options.MaxFileBytes > 64<<20 {
+			return fmt.Errorf("certificates.max_file_bytes must be between 0 (default) and 67108864")
+		}
+		return nil
+	}
+	if kind == "cbom" && collector.Backend == "import" {
+		if collector.Import == nil || collector.Import.Path == "" {
+			return fmt.Errorf("import.path is required")
+		}
+		return nil
 	}
 	if kind == "hbom" && collector.Backend == "hbom" {
 		return nil

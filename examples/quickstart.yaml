@@ -1,0 +1,22 @@
+version: 1
+timeout: 10m
+
+output:
+  directory: ./results
+
+# Run from the repository root. Git and Syft are supplied by devenv/the flake.
+applications:
+  - name: bommer
+    version: 0.1.0-dev
+    target:
+      type: directory
+      path: .
+    sbom:
+      enabled: true
+      backend: syft
+      respect_gitignore: true
+      exclude:
+        - "./.devenv/**"
+        - "./.git/**"
+        - "./dist/**"
+        - "./results/**"

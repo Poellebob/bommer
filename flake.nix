@@ -16,13 +16,19 @@
             pkgs.lib.cleanSourceFilter path type
             && !(builtins.elem (baseNameOf path) [ ".devenv" ".direnv" "dist" "results" ]);
         };
-        vendorHash = "sha256-g+yaVIx4jxpAQ/+WrGKxhVeliYx7nLQe/zsGpxV4Fn4=";
+        vendorHash = "sha256-MYHY7N+LqNnfNuIdUqtb4Cr24UQqi+4tbc1ysdzJ2BY=";
         subPackages = [ "cmd/bommer" ];
         env.CGO_ENABLED = 0;
         ldflags = [ "-s" "-w" "-X main.version=0.1.0-dev" ];
         nativeBuildInputs = [ pkgs.makeWrapper ];
+        nativeCheckInputs = [ pkgs.gitMinimal pkgs.syft ];
+        checkPhase = ''
+          runHook preCheck
+          go test ./...
+          runHook postCheck
+        '';
         postInstall = ''
-          wrapProgram $out/bin/bommer --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.syft pkgs.gitMinimal ]}
+          wrapProgram $out/bin/bommer --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.syft pkgs.gitMinimal pkgs.nix ]}
         '';
         meta = {
           description = "Configurable HBOM, SBOM, and application CBOM orchestration";
