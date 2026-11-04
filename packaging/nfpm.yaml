@@ -1,0 +1,21 @@
+name: bommer
+arch: amd64
+platform: linux
+version: ${VERSION}
+maintainer: Bommer contributors
+description: Configurable Linux HBOM, SBOM, and application CBOM orchestration
+homepage: https://codeberg.org/Poellebob/bommer
+contents:
+  - src: ./dist/bommer
+    dst: /usr/bin/bommer
+  - src: ./examples/config.yaml
+    dst: /etc/bommer/config.yaml
+    type: config|noreplace
+  - src: ./packaging/bommer.service
+    dst: /usr/lib/systemd/system/bommer.service
+  - src: ./packaging/bommer.timer
+    dst: /usr/lib/systemd/system/bommer.timer
+  - dst: /var/lib/bommer
+    type: dir
+    file_info:
+      mode: 0700

@@ -1,0 +1,24 @@
+# Devenv
+.devenv*
+devenv.local.nix
+devenv.local.yaml
+
+# direnv
+.direnv
+
+# pre-commit
+.pre-commit-config.yaml
+
+# Build and scan artifacts
+/dist/
+/results/
+/result
+/result-*
+
+# Machine-local scan configuration (shared template lives in examples/)
+/config.yaml
+
+# Go test and coverage artifacts
+*.test
+/coverage.out
+/coverage.html

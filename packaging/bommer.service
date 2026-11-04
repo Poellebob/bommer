@@ -1,0 +1,13 @@
+[Unit]
+Description=Collect configured bills of materials
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bommer scan --config /etc/bommer/config.yaml
+DynamicUser=yes
+StateDirectory=bommer
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes

@@ -1,0 +1,29 @@
+version: 1
+timeout: 10m
+output:
+  directory: /var/lib/bommer/results
+
+# Disabled by default: provision collectors and choose scopes before enabling.
+host:
+  hbom:
+    enabled: false
+    backend: hbom
+  sbom:
+    enabled: false
+    backend: syft
+
+applications: []
+
+# Example application (replace applications: [] above):
+# applications:
+#   - name: payments
+#     target:
+#       type: directory
+#       path: /srv/payments
+#     sbom:
+#       enabled: true
+#       backend: syft
+#     cbom:
+#       enabled: true
+#       backend: command
+#       command: [/opt/collectors/payments-cbom, "{target}"]
