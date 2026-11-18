@@ -1,0 +1,9 @@
+[package]
+name = "bommer"
+version = "0.1.0-dev"
+edition = "2024"
+publish = false
+description = "Linux inventory collection in CycloneDX format"
+
+[lints.rust]
+unsafe_code = "forbid"

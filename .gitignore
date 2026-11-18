@@ -11,6 +11,7 @@ devenv.local.yaml
 
 # Build and scan artifacts
 /dist/
+/target/
 /results/
 /result
 /result-*
