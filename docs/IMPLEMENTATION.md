@@ -16,7 +16,7 @@ images before release; update deliberately. NixOS has no LTS channel.
 
 The Rust implementation now backs the default build. The capabilities below
 describe the implemented pipeline, not a claim of full parity with the reference
-Go source or completed live integration verification. See
+or completed live integration verification. See
 the [style guide](STYLE.md).
 
 - Implemented: strict configuration parsing, application targets, collector

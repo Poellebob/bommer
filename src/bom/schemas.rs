@@ -4,23 +4,23 @@ use serde_json::Value;
 const RESOURCES: [(&str, &str); 5] = [
     (
         "http://cyclonedx.org/schema/bom-1.6.schema.json",
-        include_str!("../../internal/bom/schemas/bom-1.6.schema.json"),
+        include_str!("../../schemas/bom-1.6.schema.json"),
     ),
     (
         "http://cyclonedx.org/schema/bom-1.7.schema.json",
-        include_str!("../../internal/bom/schemas/bom-1.7.schema.json"),
+        include_str!("../../schemas/bom-1.7.schema.json"),
     ),
     (
         "http://cyclonedx.org/schema/spdx.schema.json",
-        include_str!("../../internal/bom/schemas/spdx.schema.json"),
+        include_str!("../../schemas/spdx.schema.json"),
     ),
     (
         "http://cyclonedx.org/schema/jsf-0.82.schema.json",
-        include_str!("../../internal/bom/schemas/jsf-0.82.schema.json"),
+        include_str!("../../schemas/jsf-0.82.schema.json"),
     ),
     (
         "http://cyclonedx.org/schema/cryptography-defs.schema.json",
-        include_str!("../../internal/bom/schemas/cryptography-defs.schema.json"),
+        include_str!("../../schemas/cryptography-defs.schema.json"),
     ),
 ];
 

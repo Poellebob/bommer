@@ -60,7 +60,7 @@ just architecture-test # Check module dependency boundaries
 ```
 
 The default build and flake package use Rust with the committed `Cargo.lock`.
-The Go source remains a reference implementation, not the default build. Cargo
+The Go prototype has been removed. Cargo
 builds, Clippy, and tests use `--locked`; `just build` publishes `dist/bommer`,
 also used by `just deb` and `just rpm` through nFPM. Native packages use a static
 x86_64 musl executable with no Nix-store loader dependency. The Nix package uses
