@@ -2,29 +2,37 @@
   description = "Bommer: configurable Linux bill-of-materials collection";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+  inputs.rust-overlay = {
+    url = "github:oxalica/rust-overlay";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
 
-  outputs = { self, nixpkgs }:
+  outputs = { self, nixpkgs, rust-overlay }:
     let
       system = "x86_64-linux";
-      pkgs = import nixpkgs { inherit system; };
-      package = pkgs.buildGoModule {
+      pkgs = import nixpkgs {
+        inherit system;
+        overlays = [ rust-overlay.overlays.default ];
+      };
+      toolchain = pkgs.rust-bin.stable.latest.default;
+      rustPlatform = pkgs.makeRustPlatform { cargo = toolchain; rustc = toolchain; };
+      package = rustPlatform.buildRustPackage {
         pname = "bommer";
         version = "0.1.0-dev";
         src = pkgs.lib.cleanSourceWith {
           src = ./.;
           filter = path: type:
             pkgs.lib.cleanSourceFilter path type
-            && !(builtins.elem (baseNameOf path) [ ".devenv" ".direnv" "dist" "results" ]);
+            && !(builtins.elem (baseNameOf path) [ ".devenv" ".direnv" "dist" "target" "results" ]);
         };
-        vendorHash = "sha256-MYHY7N+LqNnfNuIdUqtb4Cr24UQqi+4tbc1ysdzJ2BY=";
-        subPackages = [ "cmd/bommer" ];
-        env.CGO_ENABLED = 0;
-        ldflags = [ "-s" "-w" "-X main.version=0.1.0-dev" ];
+        cargoLock.lockFile = ./Cargo.lock;
+        cargoBuildFlags = [ "--bin" "bommer" ];
+        doCheck = true;
         nativeBuildInputs = [ pkgs.makeWrapper ];
         nativeCheckInputs = [ pkgs.gitMinimal pkgs.syft ];
         checkPhase = ''
           runHook preCheck
-          go test ./...
+          cargo test --locked --release
           runHook postCheck
         '';
         postInstall = ''

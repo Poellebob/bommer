@@ -1,6 +1,6 @@
 # Implementation Plan
 
-Bommer uses Go for orchestration, Nix/devenv for the development environment,
+Bommer uses Rust for orchestration, Nix/devenv for the development environment,
 just for recipes, and nFPM for native packages.
 Application identities, scopes, and enabled collectors belong in
 configuration, not compiled application-specific code.
@@ -13,6 +13,11 @@ These are targets, not a claim that integration tests already pass. Pin exact
 images before release; update deliberately. NixOS has no LTS channel.
 
 ## Progress
+
+The Rust implementation now backs the default build. The capabilities below
+describe the implemented pipeline, not a claim of full parity with the reference
+Go source or completed live integration verification. See
+the [style guide](STYLE.md).
 
 - Implemented: strict configuration parsing, application targets, collector
   selection, executable/directory preflight, process-group timeouts and
@@ -31,11 +36,23 @@ images before release; update deliberately. NixOS has no LTS channel.
 - Implemented: offline CycloneDX 1.6/1.7 validation using embedded schemas and
   references. Manifest v2 records `json-schema-offline`, scope, inventory,
   findings, coverage, available collector versions, diagnostics, and evidence.
+- Implemented: additive manifest v2 `failure` objects with stable `kind` and
+  applicable `exitCode`, `stream`, and `limit` fields; human-readable `error`
+  remains, but its wording is not a test or consumer interface. Collectors classify
+  typed process errors into shared model failures before persistence.
+- Implemented: byte-preserving JSON path representation through `model::path_text`.
+  Ordinary UTF-8 paths remain unchanged; reserved-prefix literals are escaped as
+  `bommer:utf8:<literal>`, and invalid UTF-8 paths use `bommer:unix-bytes:<hex>`.
+  See the path contract in `model::path_text` documentation.
+- Implemented: 64 MiB external BOM and 1 MiB stderr-log bounds. Nix query stderr
+  is limited to 16 KiB; overflow fails rather than using the Go reference's
+  truncation behavior. This is an intentional behavioral difference, not parity.
 - Implemented native Nix SBOM: explicitly configured existing local `/nix/store`
   closures, host `nix.roots`, and application `nix-closure` targets. Queries are
   offline/local only, with no evaluation, builds, downloads, or whole-store
-  discovery. NAR hash/size are properties, not ordinary file hashes. Nix 2.34 is
-  live-tested (2.34.8 contract); older JSON shapes have fixture coverage only.
+  discovery. NAR hash/size are properties, not ordinary file hashes. Rust tests
+  use fake Nix executables and current/legacy metadata fixtures; live version
+  compatibility remains to be verified independently.
 - Implemented native certificate CBOM: explicit PEM/DER X.509 paths, no-follow
   traversal for all path components, 4 MiB default/64 MiB maximum file size,
   100,000-entry/depth-128 bounds, deduplication, and partial-result diagnostics.
@@ -44,31 +61,47 @@ images before release; update deliberately. NixOS has no LTS channel.
 - Implemented CBOM-only import: trusted existing regular files up to 64 MiB,
   original bytes/source hash preserved, known private material rejected. Coverage
   and application association remain producer/configuration-declared, unverified.
+  Import and BOM validation share strict decoding in independent root `json.rs`;
+  fixtures exercise deep documents and typed depth-limit rejection.
 - Implemented result statuses: `collected`, `partial`, `no-findings`, and
   `failed`. Partial artifacts survive but partial/failure exits `1`. Native
   backends alone can assert no-findings; empty external output still fails.
-- Added: Go tests, devenv shell, flake, NixOS module, nFPM package definitions,
+- Added: Rust behavioral and architecture tests, devenv shell, Rust flake package,
+  NixOS module, nFPM package definitions,
   opt-in systemd timer.
-- Added: `just schema-test` and `just integration-test`; Syft integration skips
-  without Syft, and live Nix requires explicit `BOMMER_TEST_NIX_ROOT`. Portable
-  tests do not require Nix or choose a closure root automatically.
+- Added: `just schema-test`, `just integration-test`, and `just architecture-test`
+  using Cargo filters for internal sibling test modules in the single binary.
+  Native fixtures use fake collectors/Nix, require no live Nix, and never select
+  a closure root automatically. The reference Go live test is explicitly gated
+  by `BOMMER_TEST_NIX_ROOT`; that variable does not enable a Rust live test.
 - Deferred proof of concept, NOT implemented: source-code cryptography scanner
   integration. The `command` and `import` boundaries are not source scanners.
 - Remaining: external collector version/diagnostic capture and incomplete
   discovery reporting; broader Nix version/OS verification; dependency bundling
   with license review; installed-package lifecycle and broader VM integration tests.
 
-## Verified This Iteration
+## Verification Scope
 
-- Full formatting, static analysis, and race-enabled Go test suite.
-- Flake build runs every Go package's tests, including embedded-schema fixtures.
-- Local NixOS system closure: 9,469 store outputs, collected using Nix 2.34.9
-  and validated offline against CycloneDX 1.6.
-- Ubuntu 26.04 LTS VM without Nix: standalone certificate collector found 120
-  certificates in the system trust bundle. Empty scope reported no-findings;
-  missing scope retained a partial inventory and exited 1. CBOM import succeeded.
-- Existing Syft quickstart passed full schema validation. Debian and RPM package
-  generation succeeded; installed-package lifecycle remains a release gate.
+`just check` checks rustfmt, strict Clippy, the binary's tests, and black-box CLI
+tests using the committed Cargo lockfile. The flake package runs the same tests in
+its check phase. `just build` writes `dist/bommer` for the unchanged nFPM recipes.
+These checks are not Go's race detector. `just build` explicitly uses the static
+musl target for native packages; the Nix package uses its native GNU target.
+`just portable-test` runs the same tests against musl. Passing builds does not guarantee integration on the
+target distributions; installed binaries still require distro-specific testing.
+
+[`cyclonedx-bom` 0.9](https://crates.io/crates/cyclonedx-bom/0.9.0) was evaluated
+and supports 1.6/1.7 cryptographic assets. The implementation keeps official offline
+schemas plus a small native writer to preserve exact imported bytes and explicit
+empty `dependsOn` versus omission, rather than normalizing every input through
+a typed BOM model.
+
+Previous Go live-host, VM, Syft, and package-generation observations do not verify
+the Rust replacement. Re-run those checks explicitly before claiming Rust parity.
+Live Nix must remain read-only and opt-in with an existing local closure root;
+native fixture success is not a live test. Installed-package lifecycle, supported
+OS/collector versions, dependency/license review, and broader failure/security
+coverage remain release work.
 
 ## Next Milestones
 

@@ -5,5 +5,24 @@ edition = "2024"
 publish = false
 description = "Linux inventory collection in CycloneDX format"
 
+[dependencies]
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+hex = "0.4"
+jsonschema = { version = "0.33", default-features = false }
+rustix = { version = "1", features = ["fs", "process"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["unbounded_depth"] }
+serde-saphyr = "0.0.18"
+sha2 = "0.10"
+signal-hook = "0.3"
+tempfile = "3"
+thiserror = "2"
+time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
+x509-parser = "0.18"
+
+[dev-dependencies]
+syn = { version = "2", features = ["full", "visit"] }
+
 [lints.rust]
 unsafe_code = "forbid"

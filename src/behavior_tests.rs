@@ -1,24 +1,4 @@
-use crate::cli::{CliError, Request};
 use crate::model::{CommandError, CommandSpec, Name, NameError};
-
-#[test]
-fn distinguishes_commands_and_rejects_unknown_input() {
-    let cases = [
-        (vec!["scan"], Ok(Request::Scan)),
-        (vec!["doctor"], Ok(Request::Doctor)),
-        (
-            vec!["invent"],
-            Err(CliError::UnknownCommand("invent".into())),
-        ),
-        (
-            vec!["scan", "--unexpected"],
-            Err(CliError::UnsupportedArgument("--unexpected".into())),
-        ),
-    ];
-    for (input, expected) in cases {
-        assert_eq!(Request::parse(input.into_iter().map(Into::into)), expected);
-    }
-}
 
 #[test]
 fn inventory_names_cannot_escape_the_artifact_namespace() {

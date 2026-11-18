@@ -37,6 +37,9 @@ The scan prints a directory under `results/` containing the SBOM, collector log,
 and a version 2 manifest describing the run. CycloneDX 1.6/1.7 JSON is validated
 against embedded schemas offline; schema validity does not prove inventory
 completeness. Partial results are retained but cause exit code `1`.
+Manifest v2 retains human-readable `error` text and adds structured `failure`
+details for automation. Filesystem paths in JSON use a lossless tagged form when
+needed; see `model::path_text` in source.
 
 ## Development
 
@@ -48,15 +51,27 @@ Inside `devenv shell`, use `just` for recipes:
 ```sh
 just                   # List recipes
 just check             # Check formatting, run static analysis and tests
-just fmt               # Format Go source
+just fmt               # Format Rust source
 just build             # Build dist/bommer
+just portable-test     # Run tests against the static musl target
 just schema-test       # Test embedded schemas and offline validation
-just integration-test  # Run integration fixtures; live Nix is opt-in
+just integration-test  # Run fixtures with fake collectors and Nix
+just architecture-test # Check module dependency boundaries
 ```
 
-Tests do not require Nix by default. For read-only live Nix coverage, explicitly
-set `BOMMER_TEST_NIX_ROOT` to an existing local closure root when running
-`just integration-test`. No root is selected automatically.
+The default build and flake package use Rust with the committed `Cargo.lock`.
+The Go source remains a reference implementation, not the default build. Cargo
+builds, Clippy, and tests use `--locked`; `just build` publishes `dist/bommer`,
+also used by `just deb` and `just rpm` through nFPM. Native packages use a static
+x86_64 musl executable with no Nix-store loader dependency. The Nix package uses
+its native GNU toolchain. Installed-package and distro testing remain release work.
+
+Tests do not require Nix or select a host closure automatically. Rust native tests
+use fixtures and fake Nix executables; `just integration-test` does not run live
+Nix, even when `BOMMER_TEST_NIX_ROOT` is set. Any live check must be explicitly
+requested with an existing local closure root; the reference Go live test uses
+`BOMMER_TEST_NIX_ROOT`. Live Rust/Go parity and the supported OS matrix remain
+verification work, not claims made by the native test suite.
 
 ## Further Reading
 
@@ -64,3 +79,5 @@ set `BOMMER_TEST_NIX_ROOT` to an existing local closure root when running
 - [Configuration template](examples/config.yaml)
 - [Native inventory examples](examples/native.yaml) (choose local scopes first)
 - [Implementation status and roadmap](docs/IMPLEMENTATION.md)
+- [Rust implementation status](docs/IMPLEMENTATION.md)
+- [Rust style guide](docs/STYLE.md)

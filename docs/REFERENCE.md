@@ -1,6 +1,6 @@
 # Bommer Reference
 
-Configurable Linux HBOM, SBOM, and application CBOM collection, written in Go.
+Configurable Linux HBOM, SBOM, and application CBOM collection, written in Rust.
 **Early implementation, not production-ready.** See
 [the implementation plan](IMPLEMENTATION.md) for release gates and gaps.
 For a first scan, follow the [quick start](../README.md).
@@ -15,27 +15,23 @@ just build
 ```
 
 Devenv provides the tools; `just` owns the development and packaging recipes.
-Run `just` to list recipes, `just fmt` to format Go files, or `just test` to run
-tests with the race detector.
+Run `just` to list recipes, `just fmt` to format Rust files, or `just test` to run
+behavioral and black-box CLI tests. `just check` includes strict Clippy and the
+source-level architecture check. See the [style guide](STYLE.md).
 
-The shell provides Go, just, Syft, Nix, and nFPM. `hbom` and custom command collectors
+The shell provides overlay-managed Rust, Go for reference, just, Syft, Nix, and nFPM. `hbom` and custom command collectors
 must be provisioned separately. The native `certificates` and `import` backends
 need no external scanner; `nix` needs a local Nix executable and existing store.
 Lock files pin the development environment and flake inputs; production external
 collector version pinning remains to be implemented.
 
-`just schema-test` runs the `internal/bom` tests, including schema fixtures,
-embedded resource hashes, and offline loading. `just integration-test` runs
-`Test.*Integration` and `TestNixLive`. Syft integration skips when Syft is missing;
-live Nix skips unless `BOMMER_TEST_NIX_ROOT` is explicitly set:
-
-```sh
-BOMMER_TEST_NIX_ROOT=/nix/var/nix/profiles/example just integration-test
-```
-
-Choose an existing local closure root, not an installable or an arbitrary
-directory. The recipe does not discover a root, build one, or require Nix for
-portable tests. Verbose output distinguishes skipped tests from live coverage.
+`just schema-test` exercises embedded official schemas, strict decoding, and
+offline resolution. `just integration-test` runs collector, process, runner,
+import, and CLI fixtures. Native Nix tests use fake tools and metadata; they do
+not select a host closure or perform live queries. `BOMMER_TEST_NIX_ROOT` gates
+only the retained Go reference test, not Rust tests. Live checks must be explicitly
+requested with an existing local closure, never an installable or discovered root.
+`just portable-test` runs the suite against the musl native-package target.
 
 ## Configuration
 
@@ -253,6 +249,12 @@ Native coverage is `declared-scope`, import coverage is
 Certificate findings count unique certificates, not their additional algorithm
 components; Nix findings count store outputs.
 
+Failures additionally carry a structured `failure` object with stable `kind` and
+applicable `exitCode`, `stream`, and `limit` fields. Human-readable `error` wording
+is not a consumer interface. Effective scope is retained for successful and failed
+external executions. Non-UTF-8 filesystem paths use tagged hex rather than lossy
+replacement; see `model::path_text` in source.
+
 | Status | Meaning |
 | --- | --- |
 | `collected` | Validated nonempty evidence was produced; completeness is not guaranteed |
@@ -288,8 +290,8 @@ example, `VERSION=0.1.0 just deb`. They build the CLI before packaging it.
 
 The flake wraps Bommer with Syft, Git, and Nix. Native packages currently contain the CLI,
 disabled example configuration, and systemd units, **not collector binaries**;
-provision those explicitly. Native binaries use `CGO_ENABLED=0`, not a copied
-Nix-linked executable. Packages do not enable or start scanning on installation.
+provision those explicitly. Native binaries use static `x86_64-unknown-linux-musl`
+builds, not a copied Nix-linked executable. Packages do not enable or start scanning on installation.
 The service uses a dynamic unprivileged user, so inaccessible scopes fail or may
 yield incomplete collector evidence. Privileged hardware probes require a
 deliberate administrator policy change.
@@ -305,6 +307,7 @@ that output location unless explicitly adjusting service sandbox permissions.
 
 Native systems can opt into scheduling with `systemctl enable --now bommer.timer`
 after configuring and testing their collectors. Results have no automatic
-retention policy. External scanner output/log sizes are not yet bounded; native
-import and certificate file limits do not impose a run-wide output limit. Nix
-query stdout is limited to 64 MiB and stderr capture to 16 KiB.
+retention policy. External scanner stdout is limited to 64 MiB and stderr to
+1 MiB; overflow fails the job rather than publishing truncated output. Import
+and certificate file limits do not impose a run-wide output limit. Nix query
+stdout is limited to 64 MiB and stderr to 16 KiB; stderr overflow also fails.
