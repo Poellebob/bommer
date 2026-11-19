@@ -134,6 +134,32 @@ fn valid_hash(hash: &str) -> bool {
 }
 
 fn decode(data: &[u8]) -> Result<BTreeMap<String, PathMetadata>, NixError> {
+    let entries = decode_entries(data)?;
+    for (path, metadata) in &entries {
+        if !is_output(path)
+            || (!metadata.path.is_empty() && metadata.path != *path)
+            || metadata.version.is_some_and(|version| version != 1)
+            || !valid_hash(&metadata.nar_hash)
+            || (!metadata.deriver.is_empty()
+                && metadata.deriver != "unknown-deriver"
+                && !(store_path(&metadata.deriver) && metadata.deriver.ends_with(".drv")))
+        {
+            return Err(NixError::InvalidMetadata);
+        }
+
+        for reference in &metadata.references {
+            if !entries.contains_key(reference) {
+                return Err(NixError::IncompleteClosure {
+                    missing: reference.into(),
+                });
+            }
+        }
+    }
+
+    Ok(entries)
+}
+
+fn decode_entries(data: &[u8]) -> Result<BTreeMap<String, PathMetadata>, NixError> {
     let value: Value = serde_json::from_slice(data).map_err(|_| NixError::InvalidMetadata)?;
     let mut entries = BTreeMap::new();
     match value {
@@ -160,27 +186,6 @@ fn decode(data: &[u8]) -> Result<BTreeMap<String, PathMetadata>, NixError> {
 
     if entries.is_empty() {
         return Err(NixError::InvalidMetadata);
-    }
-
-    for (path, metadata) in &entries {
-        if !is_output(path)
-            || (!metadata.path.is_empty() && metadata.path != *path)
-            || metadata.version.is_some_and(|version| version != 1)
-            || !valid_hash(&metadata.nar_hash)
-            || (!metadata.deriver.is_empty()
-                && metadata.deriver != "unknown-deriver"
-                && !(store_path(&metadata.deriver) && metadata.deriver.ends_with(".drv")))
-        {
-            return Err(NixError::InvalidMetadata);
-        }
-
-        for reference in &metadata.references {
-            if !entries.contains_key(reference) {
-                return Err(NixError::IncompleteClosure {
-                    missing: reference.into(),
-                });
-            }
-        }
     }
 
     Ok(entries)

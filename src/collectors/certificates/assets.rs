@@ -4,8 +4,10 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use x509_parser::{
-    parse_x509_certificate, public_key::PublicKey, signature_algorithm::RsaSsaPssParams,
-    x509::AlgorithmIdentifier,
+    parse_x509_certificate,
+    public_key::PublicKey,
+    signature_algorithm::RsaSsaPssParams,
+    x509::{AlgorithmIdentifier, SubjectPublicKeyInfo},
 };
 
 use crate::bom::document::Document;
@@ -75,6 +77,49 @@ fn signature_name(identifier: &AlgorithmIdentifier<'_>) -> &'static str {
     }
 }
 
+fn public_key_classification(public_key: &SubjectPublicKeyInfo<'_>) -> (String, Value) {
+    let mut key_properties = json!({"primitive":"unknown"});
+    let key_name = match public_key.parsed() {
+        Ok(PublicKey::RSA(rsa)) => {
+            let modulus = rsa
+                .modulus
+                .iter()
+                .position(|byte| *byte != 0)
+                .map_or(&[][..], |start| &rsa.modulus[start..]);
+            let modulus_bits = modulus
+                .first()
+                .map_or(0, |byte| modulus.len() * 8 - byte.leading_zeros() as usize);
+            key_properties["parameterSetIdentifier"] = modulus_bits.to_string().into();
+            format!("RSA-{modulus_bits}")
+        }
+        Ok(PublicKey::EC(_)) => {
+            let curve_oid = public_key
+                .algorithm
+                .parameters
+                .as_ref()
+                .and_then(|parameters| parameters.as_oid().ok())
+                .map(|oid| oid.to_id_string());
+            let curve = match curve_oid.as_deref() {
+                Some("1.2.840.10045.3.1.7") => "P-256",
+                Some("1.3.132.0.34") => "P-384",
+                Some("1.3.132.0.35") => "P-521",
+                Some("1.3.132.0.33") => "P-224",
+                _ => "unknown",
+            };
+            key_properties = json!({"primitive":"signature","curve":curve});
+            format!("ECDSA-{curve}")
+        }
+        _ if public_key.algorithm.algorithm.to_id_string() == "1.3.101.112" => {
+            key_properties = json!({"primitive":"signature","curve":"Ed25519"});
+            "Ed25519".into()
+        }
+        Ok(PublicKey::DSA(_)) => "DSA".into(),
+        _ => "0".into(),
+    };
+
+    (key_name, key_properties)
+}
+
 pub(in crate::collectors::certificates) fn build(
     observations: &BTreeMap<String, Observation>,
     include_identity: bool,
@@ -88,45 +133,7 @@ pub(in crate::collectors::certificates) fn build(
         let (_, certificate) =
             parse_x509_certificate(&observation.der).map_err(|_| CertificateError::Options)?;
 
-        let public_key = certificate.public_key();
-        let mut key_properties = json!({"primitive":"unknown"});
-        let key_name = match public_key.parsed() {
-            Ok(PublicKey::RSA(rsa)) => {
-                let modulus = rsa
-                    .modulus
-                    .iter()
-                    .position(|byte| *byte != 0)
-                    .map_or(&[][..], |start| &rsa.modulus[start..]);
-                let modulus_bits = modulus
-                    .first()
-                    .map_or(0, |byte| modulus.len() * 8 - byte.leading_zeros() as usize);
-                key_properties["parameterSetIdentifier"] = modulus_bits.to_string().into();
-                format!("RSA-{modulus_bits}")
-            }
-            Ok(PublicKey::EC(_)) => {
-                let curve_oid = public_key
-                    .algorithm
-                    .parameters
-                    .as_ref()
-                    .and_then(|parameters| parameters.as_oid().ok())
-                    .map(|oid| oid.to_id_string());
-                let curve = match curve_oid.as_deref() {
-                    Some("1.2.840.10045.3.1.7") => "P-256",
-                    Some("1.3.132.0.34") => "P-384",
-                    Some("1.3.132.0.35") => "P-521",
-                    Some("1.3.132.0.33") => "P-224",
-                    _ => "unknown",
-                };
-                key_properties = json!({"primitive":"signature","curve":curve});
-                format!("ECDSA-{curve}")
-            }
-            _ if public_key.algorithm.algorithm.to_id_string() == "1.3.101.112" => {
-                key_properties = json!({"primitive":"signature","curve":"Ed25519"});
-                "Ed25519".into()
-            }
-            Ok(PublicKey::DSA(_)) => "DSA".into(),
-            _ => "0".into(),
-        };
+        let (key_name, key_properties) = public_key_classification(certificate.public_key());
         let key_reference = algorithm(&mut algorithms, "public-key", &key_name, key_properties);
         let signature_reference = algorithm(
             &mut algorithms,

@@ -101,23 +101,22 @@ impl Drop for ProcessGuard {
 impl Process {
     pub(crate) fn find_executable(executable: &OsStr) -> Result<PathBuf, ProcessError> {
         let valid = |path: &PathBuf| path.is_file() && access(path, Access::EXEC_OK).is_ok();
-        if executable.as_encoded_bytes().contains(&b'/') {
-            let path = PathBuf::from(executable);
-            if valid(&path) {
-                return Ok(path);
-            }
-        } else if !executable.is_empty()
-            && let Some(paths) = std::env::var_os("PATH")
-        {
-            for directory in std::env::split_paths(&paths) {
-                let path = directory.join(executable);
-                if valid(&path) {
-                    return Ok(path);
-                }
-            }
-        }
 
-        Err(ProcessError::MissingExecutable {
+        // An explicit path is either accepted or rejected outright; it never
+        // falls back to a PATH search.
+        let candidate = if executable.as_encoded_bytes().contains(&b'/') {
+            Some(PathBuf::from(executable)).filter(|path| valid(path))
+        } else if executable.is_empty() {
+            None
+        } else {
+            std::env::var_os("PATH").and_then(|paths| {
+                std::env::split_paths(&paths)
+                    .map(|directory| directory.join(executable))
+                    .find(|path| valid(path))
+            })
+        };
+
+        candidate.ok_or_else(|| ProcessError::MissingExecutable {
             executable: executable.to_owned(),
         })
     }
@@ -221,21 +220,23 @@ impl Process {
             }
         })();
 
-        if result.is_err() {
-            // Stop writers before draining diagnostics already queued at cancellation.
-            // Nonblocking reads also bound cleanup if a detached descendant holds a pipe.
-            drop(guard);
-            while !stderr_done {
-                match drain(
-                    &mut stderr,
-                    &mut output.stderr,
-                    stderr_limit,
-                    Stream::Stderr,
-                    &mut stderr_done,
-                ) {
-                    Ok(true) => {}
-                    Ok(false) | Err(_) => break,
-                }
+        if result.is_ok() {
+            return result;
+        }
+
+        // Stop writers before draining diagnostics already queued at cancellation.
+        // Nonblocking reads also bound cleanup if a detached descendant holds a pipe.
+        drop(guard);
+        while !stderr_done {
+            match drain(
+                &mut stderr,
+                &mut output.stderr,
+                stderr_limit,
+                Stream::Stderr,
+                &mut stderr_done,
+            ) {
+                Ok(true) => {}
+                Ok(false) | Err(_) => break,
             }
         }
 
@@ -276,13 +277,15 @@ impl Process {
 }
 
 fn check_interruption(deadline: Instant, cancelled: &AtomicBool) -> Result<(), ProcessError> {
+    // Cancellation wins over an elapsed deadline.
     if cancelled.load(Ordering::Relaxed) {
-        Err(ProcessError::Cancelled)
-    } else if Instant::now() >= deadline {
-        Err(ProcessError::Timeout)
-    } else {
-        Ok(())
+        return Err(ProcessError::Cancelled);
     }
+    if Instant::now() >= deadline {
+        return Err(ProcessError::Timeout);
+    }
+
+    Ok(())
 }
 
 fn nonblocking(pipe: &impl AsFd) -> io::Result<()> {

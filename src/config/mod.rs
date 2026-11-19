@@ -148,25 +148,14 @@ impl Config {
                 });
             }
 
-            let target = match application.target.kind.as_str() {
-                "directory"
-                    if !application.target.path.is_empty()
-                        && application.target.image.is_empty() =>
-                {
-                    Target::Directory(application.target.path.into())
-                }
-                "nix-closure"
-                    if !application.target.path.is_empty()
-                        && application.target.image.is_empty() =>
-                {
-                    Target::NixClosure(application.target.path.into())
-                }
-                "container"
-                    if !application.target.image.is_empty()
-                        && application.target.path.is_empty() =>
-                {
-                    Target::RegistryImage(application.target.image)
-                }
+            let target = match (
+                application.target.kind.as_str(),
+                application.target.path.is_empty(),
+                application.target.image.is_empty(),
+            ) {
+                ("directory", false, true) => Target::Directory(application.target.path.into()),
+                ("nix-closure", false, true) => Target::NixClosure(application.target.path.into()),
+                ("container", true, false) => Target::RegistryImage(application.target.image),
                 _ => {
                     return Err(ConfigError::InvalidTarget {
                         name: application.name,

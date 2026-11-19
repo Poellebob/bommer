@@ -112,52 +112,57 @@ pub(in crate::collectors::certificates) fn resolve_target(
     job: &Job,
 ) -> Result<Option<PathBuf>, CertificateError> {
     if job.scope.is_host() {
-        Ok(None)
-    } else {
-        match &job.target {
-            Target::Directory(path) => {
-                if path
-                    .components()
-                    .any(|component| component == Component::ParentDir)
-                {
-                    return Err(CertificateError::InvalidTarget { path: path.clone() });
-                }
-
-                // Make relative targets absolute without resolving any directory symlinks.
-                let absolute_path = if path.is_absolute() {
-                    path.clone()
-                } else {
-                    std::env::current_dir()?.join(path)
-                };
-                Ok(Some(absolute_path.components().collect::<PathBuf>()))
-            }
-            Target::NixClosure(path) => {
-                // Only an explicitly declared Nix profile root may be resolved first.
-                // Every subsequent certificate path is still opened with no-follow.
-                let resolved_path = path.canonicalize()?;
-                let is_store_output = resolved_path
-                    .to_str()
-                    .and_then(|path| path.strip_prefix("/nix/store/"))
-                    .is_some_and(|name| {
-                        name.len() > 33
-                            && !name.ends_with(".drv")
-                            && name.as_bytes()[32] == b'-'
-                            && name.as_bytes()[..32]
-                                .iter()
-                                .all(|byte| b"0123456789abcdfghijklmnpqrsvwxyz".contains(byte))
-                            && name.as_bytes()[33..].iter().all(|byte| {
-                                byte.is_ascii_alphanumeric() || b"+._?=-".contains(byte)
-                            })
-                    });
-                let metadata = resolved_path.metadata()?;
-                if !is_store_output || (!metadata.is_file() && !metadata.is_dir()) {
-                    return Err(CertificateError::InvalidTarget { path: path.clone() });
-                }
-                Ok(Some(resolved_path))
-            }
-            _ => Err(CertificateError::Options),
-        }
+        return Ok(None);
     }
+
+    match &job.target {
+        Target::Directory(path) => {
+            if path
+                .components()
+                .any(|component| component == Component::ParentDir)
+            {
+                return Err(CertificateError::InvalidTarget { path: path.clone() });
+            }
+
+            // Make relative targets absolute without resolving any directory symlinks.
+            let absolute_path = if path.is_absolute() {
+                path.clone()
+            } else {
+                std::env::current_dir()?.join(path)
+            };
+            Ok(Some(absolute_path.components().collect::<PathBuf>()))
+        }
+        Target::NixClosure(path) => {
+            // Only an explicitly declared Nix profile root may be resolved first.
+            // Every subsequent certificate path is still opened with no-follow.
+            let resolved_path = path.canonicalize()?;
+            let metadata = resolved_path.metadata()?;
+            if !is_nix_store_output(&resolved_path) || (!metadata.is_file() && !metadata.is_dir()) {
+                return Err(CertificateError::InvalidTarget { path: path.clone() });
+            }
+            Ok(Some(resolved_path))
+        }
+        _ => Err(CertificateError::Options),
+    }
+}
+
+fn is_nix_store_output(resolved_path: &Path) -> bool {
+    let Some(name) = resolved_path
+        .to_str()
+        .and_then(|path| path.strip_prefix("/nix/store/"))
+    else {
+        return false;
+    };
+
+    name.len() > 33
+        && !name.ends_with(".drv")
+        && name.as_bytes()[32] == b'-'
+        && name.as_bytes()[..32]
+            .iter()
+            .all(|byte| b"0123456789abcdfghijklmnpqrsvwxyz".contains(byte))
+        && name.as_bytes()[33..]
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"+._?=-".contains(byte))
 }
 
 impl Scan<'_> {
@@ -212,42 +217,7 @@ impl Scan<'_> {
             }
         };
         if metadata.is_dir() {
-            let directory = match Dir::read_from(&file) {
-                Ok(directory) => directory,
-                Err(_) => {
-                    self.diagnostic(DiagnosticCode::UnreadablePath, path);
-                    return Ok(());
-                }
-            };
-            for entry in directory {
-                self.context.check()?;
-                let entry = match entry {
-                    Ok(entry) => entry,
-                    Err(_) => {
-                        self.diagnostic(DiagnosticCode::UnreadablePath, path);
-                        break;
-                    }
-                };
-                let name = entry.file_name().to_bytes();
-                if name == b"." || name == b".." {
-                    continue;
-                }
-                if self.entries_scanned >= self.entry_limit {
-                    self.diagnostic(DiagnosticCode::LimitExceeded, path);
-                    break;
-                }
-                let name = OsString::from_vec(name.to_vec());
-                let child_path = path.join(&name);
-                match openat(&file, &name, SAFE_OPEN_FLAGS, Mode::empty()) {
-                    Ok(descriptor) => self.walk(File::from(descriptor), &child_path, depth + 1)?,
-                    Err(error) => {
-                        self.entries_scanned += 1;
-                        self.diagnostic(open_error_code(&error.into()), &child_path);
-                    }
-                }
-            }
-
-            return Ok(());
+            return self.walk_directory(&file, path, depth);
         }
 
         if !metadata.is_file() {
@@ -256,6 +226,50 @@ impl Scan<'_> {
         }
 
         self.inspect_file(file, path, metadata.len())
+    }
+
+    fn walk_directory(
+        &mut self,
+        file: &File,
+        path: &Path,
+        depth: usize,
+    ) -> Result<(), CertificateError> {
+        let directory = match Dir::read_from(file) {
+            Ok(directory) => directory,
+            Err(_) => {
+                self.diagnostic(DiagnosticCode::UnreadablePath, path);
+                return Ok(());
+            }
+        };
+        for entry in directory {
+            self.context.check()?;
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(_) => {
+                    self.diagnostic(DiagnosticCode::UnreadablePath, path);
+                    break;
+                }
+            };
+            let name = entry.file_name().to_bytes();
+            if name == b"." || name == b".." {
+                continue;
+            }
+            if self.entries_scanned >= self.entry_limit {
+                self.diagnostic(DiagnosticCode::LimitExceeded, path);
+                break;
+            }
+            let name = OsString::from_vec(name.to_vec());
+            let child_path = path.join(&name);
+            match openat(file, &name, SAFE_OPEN_FLAGS, Mode::empty()) {
+                Ok(descriptor) => self.walk(File::from(descriptor), &child_path, depth + 1)?,
+                Err(error) => {
+                    self.entries_scanned += 1;
+                    self.diagnostic(open_error_code(&error.into()), &child_path);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn inspect_file(
@@ -300,60 +314,68 @@ impl Scan<'_> {
         }
 
         let pem_begin_marker = b"-----BEGIN ";
-        if data
+        let is_pem = data
             .windows(pem_begin_marker.len())
-            .any(|window| window == pem_begin_marker)
-        {
-            let mut remaining_bytes = data.as_slice();
-            while let Some(block_start) = remaining_bytes
-                .windows(pem_begin_marker.len())
-                .position(|window| window == pem_begin_marker)
-            {
-                self.context.check()?;
-                remaining_bytes = &remaining_bytes[block_start..];
-                let block_end = remaining_bytes[pem_begin_marker.len()..]
-                    .windows(pem_begin_marker.len())
-                    .position(|window| window == pem_begin_marker)
-                    .map_or(remaining_bytes.len(), |index| {
-                        index + pem_begin_marker.len()
-                    });
-                let block = &remaining_bytes[..block_end];
-                remaining_bytes = &remaining_bytes[block_end..];
-                if block.starts_with(b"-----BEGIN CERTIFICATE REQUEST-----")
-                    || !block.starts_with(b"-----BEGIN CERTIFICATE")
-                {
-                    continue;
-                }
-
-                // Never decode non-certificate PEM blocks, including malformed private keys.
-                let decoded_certificate = block
-                    .strip_prefix(b"-----BEGIN CERTIFICATE-----")
-                    .and_then(|body| {
-                        let pem_end_marker = b"-----END CERTIFICATE-----";
-                        let body_end = body
-                            .windows(pem_end_marker.len())
-                            .position(|window| window == pem_end_marker)?;
-                        STANDARD
-                            .decode(
-                                body[..body_end]
-                                    .iter()
-                                    .copied()
-                                    .filter(|byte| !byte.is_ascii_whitespace())
-                                    .collect::<Vec<_>>(),
-                            )
-                            .ok()
-                    });
-                match decoded_certificate {
-                    Some(der) => self.record(&der, path, true),
-                    None => self.diagnostic(DiagnosticCode::MalformedCertificate, path),
-                }
-            }
-        } else if has_certificate_extension || data.first() == Some(&0x30) {
+            .any(|window| window == pem_begin_marker);
+        if is_pem {
+            return self.inspect_pem_blocks(&data, path);
+        }
+        if has_certificate_extension || data.first() == Some(&0x30) {
             self.record(&data, path, has_certificate_extension);
         }
 
         Ok(())
     }
+
+    fn inspect_pem_blocks(&mut self, data: &[u8], path: &Path) -> Result<(), CertificateError> {
+        let pem_begin_marker = b"-----BEGIN ";
+        let mut remaining_bytes = data;
+        while let Some(block_start) = remaining_bytes
+            .windows(pem_begin_marker.len())
+            .position(|window| window == pem_begin_marker)
+        {
+            self.context.check()?;
+            remaining_bytes = &remaining_bytes[block_start..];
+            let block_end = remaining_bytes[pem_begin_marker.len()..]
+                .windows(pem_begin_marker.len())
+                .position(|window| window == pem_begin_marker)
+                .map_or(remaining_bytes.len(), |index| {
+                    index + pem_begin_marker.len()
+                });
+            let block = &remaining_bytes[..block_end];
+            remaining_bytes = &remaining_bytes[block_end..];
+            if block.starts_with(b"-----BEGIN CERTIFICATE REQUEST-----")
+                || !block.starts_with(b"-----BEGIN CERTIFICATE")
+            {
+                continue;
+            }
+
+            // Never decode non-certificate PEM blocks, including malformed private keys.
+            match decode_certificate_block(block) {
+                Some(der) => self.record(&der, path, true),
+                None => self.diagnostic(DiagnosticCode::MalformedCertificate, path),
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn decode_certificate_block(block: &[u8]) -> Option<Vec<u8>> {
+    let body = block.strip_prefix(b"-----BEGIN CERTIFICATE-----")?;
+    let pem_end_marker = b"-----END CERTIFICATE-----";
+    let body_end = body
+        .windows(pem_end_marker.len())
+        .position(|window| window == pem_end_marker)?;
+    STANDARD
+        .decode(
+            body[..body_end]
+                .iter()
+                .copied()
+                .filter(|byte| !byte.is_ascii_whitespace())
+                .collect::<Vec<_>>(),
+        )
+        .ok()
 }
 
 pub(in crate::collectors::certificates) fn discover(

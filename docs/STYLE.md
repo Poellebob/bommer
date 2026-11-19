@@ -66,6 +66,14 @@ Keep functions together until extraction makes ownership or reuse clearer. Avoid
 compatibility layers except for actual configuration, persisted artifacts, and CLI
 contracts. Do not add fallback collectors that silently change inventory coverage.
 
+Keep each function focused on one responsibility, and keep the main flow flat.
+Reject exceptional cases early with guard clauses, early returns, and `continue`;
+let normal and default behavior proceed at the lowest indentation level. Extract a
+helper only when it names a real responsibility, never merely to shorten a
+function. Do not flatten state machines, algorithm alternatives, or shared
+finalization when doing so would change error precedence, skip cleanup, or
+obscure the sequence of operations.
+
 ## Layout
 
 Whitespace communicates intent. Keep related statements together and use blank

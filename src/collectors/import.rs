@@ -58,35 +58,8 @@ pub(crate) fn check(job: &Job) -> Result<(), ImportError> {
     open(job).map(|_| ())
 }
 
-pub(crate) fn collect(
-    job: &Job,
-    context: &CollectionContext,
-    output: &mut dyn Write,
-) -> Result<CollectionOutcome, ImportError> {
-    context.check()?;
-    let mut file = open(job)?.take(LIMIT + 1);
-    let mut data = Vec::new();
-    let mut buffer = [0; 64 << 10];
-    loop {
-        context.check()?;
-        let bytes_read = file.read(&mut buffer)?;
-        if bytes_read == 0 {
-            break;
-        }
-
-        data.extend_from_slice(&buffer[..bytes_read]);
-        if data.len() as u64 > LIMIT {
-            return Err(ImportError::LimitExceeded);
-        }
-    }
-
-    // Do not use the BOM validator here: imports are leaves and preserve producer graphs.
-    let document = json::decode(&data)?;
-    if !document.is_object() {
-        return Err(ImportError::InvalidJson);
-    }
-
-    let mut pending_values = vec![&document];
+fn inspect_document(document: &Value, context: &CollectionContext) -> Result<usize, ImportError> {
+    let mut pending_values = vec![document];
     let mut findings = 0;
     while let Some(value) = pending_values.pop() {
         context.check()?;
@@ -120,6 +93,38 @@ pub(crate) fn collect(
     {
         return Err(ImportError::NoCryptographicAssets);
     }
+
+    Ok(findings)
+}
+
+pub(crate) fn collect(
+    job: &Job,
+    context: &CollectionContext,
+    output: &mut dyn Write,
+) -> Result<CollectionOutcome, ImportError> {
+    context.check()?;
+    let mut file = open(job)?.take(LIMIT + 1);
+    let mut data = Vec::new();
+    let mut buffer = [0; 64 << 10];
+    loop {
+        context.check()?;
+        let bytes_read = file.read(&mut buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+
+        data.extend_from_slice(&buffer[..bytes_read]);
+        if data.len() as u64 > LIMIT {
+            return Err(ImportError::LimitExceeded);
+        }
+    }
+
+    // Do not use the BOM validator here: imports are leaves and preserve producer graphs.
+    let document = json::decode(&data)?;
+    if !document.is_object() {
+        return Err(ImportError::InvalidJson);
+    }
+    let findings = inspect_document(&document, context)?;
 
     let Backend::Import { path } = &job.backend else {
         return Err(ImportError::Options);

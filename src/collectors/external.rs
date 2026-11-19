@@ -133,72 +133,22 @@ fn prepare_command(
     };
     let (executable, mut arguments) = command(job, &target)?;
 
-    let mut patterns: Vec<OsString> = match &job.backend {
+    let mut patterns = match &job.backend {
         Backend::Syft { exclusions, .. } => exclusions.iter().map(OsString::from).collect(),
         _ => Vec::new(),
     };
-    if let Backend::Syft {
-        respect_gitignore: true,
-        ..
-    } = &job.backend
-    {
-        let Target::Directory(path) = &job.target else {
-            return Err(ExternalError::UnsupportedTarget);
-        };
-        let git_arguments = [
-            OsString::from("-C"),
-            path.as_os_str().to_owned(),
-            OsString::from("ls-files"),
-            OsString::from("--others"),
-            OsString::from("--ignored"),
-            OsString::from("--exclude-standard"),
-            OsString::from("--directory"),
-            OsString::from("-z"),
-        ];
-        let ignored_paths_output = Process::capture(
-            OsStr::new("git"),
-            &git_arguments,
-            context.deadline,
-            &context.cancelled,
-            64 << 20,
-            1 << 20,
-        )?;
-
-        patterns.extend([OsString::from("./.git"), OsString::from("./.git/**")]);
-        for path in ignored_paths_output
-            .stdout
-            .split(|byte| *byte == 0)
-            .filter(|path| !path.is_empty())
-        {
-            let is_directory = path.ends_with(b"/");
-            let path = if is_directory {
-                &path[..path.len() - 1]
-            } else {
-                path
-            };
-            let mut pattern = b"./".to_vec();
-            for byte in path {
-                if b"\\*?[]{}".contains(byte) {
-                    pattern.push(b'\\');
-                }
-                pattern.push(*byte);
-            }
-            if is_directory {
-                pattern.extend_from_slice(b"/**");
-            }
-            patterns.push(OsString::from_vec(pattern));
-        }
-    }
+    patterns.extend(ignored_git_patterns(job, context)?);
 
     let mut exclusions = Vec::new();
     let mut unique_patterns = std::collections::HashSet::new();
     for pattern in patterns {
-        if unique_patterns.insert(pattern.clone()) {
-            exclusions.push(crate::path_encoding::path_text(std::path::Path::new(
-                &pattern,
-            )));
-            arguments.extend([OsString::from("--exclude"), pattern]);
+        if !unique_patterns.insert(pattern.clone()) {
+            continue;
         }
+        exclusions.push(crate::path_encoding::path_text(std::path::Path::new(
+            &pattern,
+        )));
+        arguments.extend([OsString::from("--exclude"), pattern]);
     }
 
     Ok(PreparedCommand {
@@ -207,6 +157,74 @@ fn prepare_command(
         exclusions,
         target: crate::path_encoding::path_text(std::path::Path::new(&target)),
     })
+}
+
+fn ignored_git_patterns(
+    job: &Job,
+    context: &CollectionContext,
+) -> Result<Vec<OsString>, ExternalError> {
+    let Backend::Syft {
+        respect_gitignore: true,
+        ..
+    } = &job.backend
+    else {
+        return Ok(Vec::new());
+    };
+    let Target::Directory(path) = &job.target else {
+        return Err(ExternalError::UnsupportedTarget);
+    };
+
+    let git_arguments = [
+        OsString::from("-C"),
+        path.as_os_str().to_owned(),
+        OsString::from("ls-files"),
+        OsString::from("--others"),
+        OsString::from("--ignored"),
+        OsString::from("--exclude-standard"),
+        OsString::from("--directory"),
+        OsString::from("-z"),
+    ];
+    let ignored_paths = Process::capture(
+        OsStr::new("git"),
+        &git_arguments,
+        context.deadline,
+        &context.cancelled,
+        64 << 20,
+        1 << 20,
+    )?;
+
+    let mut patterns = vec![OsString::from("./.git"), OsString::from("./.git/**")];
+    patterns.extend(
+        ignored_paths
+            .stdout
+            .split(|byte| *byte == 0)
+            .filter(|path| !path.is_empty())
+            .map(git_ignore_pattern),
+    );
+
+    Ok(patterns)
+}
+
+fn git_ignore_pattern(raw_path: &[u8]) -> OsString {
+    let is_directory = raw_path.ends_with(b"/");
+    let path = if is_directory {
+        &raw_path[..raw_path.len() - 1]
+    } else {
+        raw_path
+    };
+
+    let mut pattern = b"./".to_vec();
+    for byte in path {
+        if b"\\*?[]{}".contains(byte) {
+            pattern.push(b'\\');
+        }
+        pattern.push(*byte);
+    }
+    if is_directory {
+        pattern.extend_from_slice(b"/**");
+    }
+
+    OsString::from_vec(pattern)
 }
 
 fn command(
@@ -240,26 +258,29 @@ fn command(
             let arguments = command
                 .arguments
                 .iter()
-                .map(|argument| {
-                    let mut substituted_argument = Vec::new();
-                    let mut remaining_bytes = argument.as_bytes();
-                    while let Some(token_start) = remaining_bytes
-                        .windows(8)
-                        .position(|window| window == b"{target}")
-                    {
-                        substituted_argument.extend_from_slice(&remaining_bytes[..token_start]);
-                        substituted_argument.extend_from_slice(effective_target.as_bytes());
-                        remaining_bytes = &remaining_bytes[token_start + 8..];
-                    }
-                    substituted_argument.extend_from_slice(remaining_bytes);
-                    OsString::from_vec(substituted_argument)
-                })
+                .map(|argument| substitute_target(argument, effective_target))
                 .collect();
 
             Ok((command.executable().to_owned(), arguments))
         }
         _ => Err(ExternalError::UnsupportedTarget),
     }
+}
+
+fn substitute_target(argument: &OsStr, effective_target: &OsStr) -> OsString {
+    let mut substituted_argument = Vec::new();
+    let mut remaining_bytes = argument.as_bytes();
+    while let Some(token_start) = remaining_bytes
+        .windows(8)
+        .position(|window| window == b"{target}")
+    {
+        substituted_argument.extend_from_slice(&remaining_bytes[..token_start]);
+        substituted_argument.extend_from_slice(effective_target.as_bytes());
+        remaining_bytes = &remaining_bytes[token_start + 8..];
+    }
+    substituted_argument.extend_from_slice(remaining_bytes);
+
+    OsString::from_vec(substituted_argument)
 }
 
 #[cfg(test)]

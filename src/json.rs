@@ -155,18 +155,19 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Value, DecodeError> {
 }
 
 fn attach(value: Value, frames: &mut [Frame], document: &mut Option<Value>) {
-    if let Some(frame) = frames.last_mut() {
-        match &mut frame.value {
-            Value::Object(object) => {
-                object.insert(frame.key.take().expect("decoded object key"), value);
-            }
-            Value::Array(array) => array.push(value),
-            _ => unreachable!("container frame"),
-        }
-        frame.state = State::CommaOrEnd;
-    } else {
+    let Some(frame) = frames.last_mut() else {
         *document = Some(value);
+        return;
+    };
+
+    match &mut frame.value {
+        Value::Object(object) => {
+            object.insert(frame.key.take().expect("decoded object key"), value);
+        }
+        Value::Array(array) => array.push(value),
+        _ => unreachable!("container frame"),
     }
+    frame.state = State::CommaOrEnd;
 }
 
 impl Parser<'_> {
