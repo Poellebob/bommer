@@ -1,6 +1,6 @@
 use std::ffi::OsString;
-use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::fs;
+use std::io::Write;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
@@ -10,19 +10,18 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-use rustix::fs::{FlockOperation, flock};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::bom::validation::Validator;
 use crate::collection::context::CollectionContext;
-use crate::collection::failure::{Failure, FailureKind};
 use crate::collection::outcome::{CollectionOutcome, ExecutionScope};
 use crate::collectors::external;
 use crate::config::Config;
 use crate::job::{Backend, InventoryKind, Job, Name, Scope, Target};
-use crate::output::{JobResult, Manifest, OutputError, RunOutput};
-use crate::scan::{Scan, ScanError, ScanReport};
+use crate::manifest::{JobResult, Manifest};
+use crate::output::RunOutput;
+use crate::scan::{Scan, ScanReport};
 
 const BOM: &str = r#"{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,"components":[{"type":"library","name":"scan-fixture","version":"2.3.4"}]}"#;
 
@@ -102,6 +101,23 @@ fn assert_failed(result: &Value) {
     for key in ["artifact", "sha256", "specVersion"] {
         assert!(result.get(key).is_none(), "failed result contains {key}");
     }
+}
+
+#[test]
+fn empty_scan_checkpoints_a_successful_manifest() {
+    let temporary = tempfile::tempdir().unwrap();
+    let report = Scan::new()
+        .unwrap()
+        .execute(
+            &[],
+            temporary.path(),
+            Duration::from_secs(10),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+    assert!(!report.unsuccessful);
+    assert_eq!(manifest(&report.directory)["results"], json!([]));
+    assert_eq!(entries(&report.directory), ["manifest.json"]);
 }
 
 #[test]
@@ -195,6 +211,8 @@ fn invalid_collector_output_is_not_published_and_candidates_are_removed() {
         let document = manifest(&report.directory);
         assert_eq!(document["results"].as_array().unwrap().len(), 1);
         assert_failed(&document["results"][0]);
+        // Collection succeeded, so its effective scope survives validation failure.
+        assert_eq!(document["results"][0]["target"], "dir:/");
         assert_eq!(
             document["results"][0]["failure"],
             json!({"kind": "validation"})
@@ -350,99 +368,6 @@ fn pre_cancelled_scan_records_all_failures_without_launching_collectors() {
             "manifest.json"
         ]
     );
-}
-
-#[test]
-fn held_output_lock_returns_typed_error_without_creating_a_run() {
-    let temporary = tempfile::tempdir().unwrap();
-    let root = temporary.path().join("output");
-    fs::create_dir(&root).unwrap();
-    let lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create_new(true)
-        .open(root.join(".lock"))
-        .unwrap();
-    flock(&lock, FlockOperation::NonBlockingLockExclusive).unwrap();
-    let scan = Scan::new().unwrap();
-
-    let error = scan
-        .execute(
-            &[],
-            &root,
-            Duration::from_secs(10),
-            Arc::new(AtomicBool::new(false)),
-        )
-        .unwrap_err();
-
-    assert!(matches!(error, ScanError::Output(OutputError::Locked)));
-    assert_eq!(entries(&root), [".lock"]);
-
-    drop(lock);
-
-    let report = scan
-        .execute(
-            &[],
-            &root,
-            Duration::from_secs(10),
-            Arc::new(AtomicBool::new(false)),
-        )
-        .unwrap();
-
-    assert!(!report.unsuccessful);
-    assert_eq!(manifest(&report.directory)["results"], json!([]));
-}
-
-#[test]
-fn checkpoints_replace_complete_manifests_and_unpublished_candidates_are_cleaned_up() {
-    let temporary = tempfile::tempdir().unwrap();
-    let executable = script(temporary.path(), "unused", "exit 0");
-    let config = command_config(&[("pending", &executable)]);
-    let output = RunOutput::create(&temporary.path().join("output")).unwrap();
-    let mut checkpoint = Manifest::new();
-    output.checkpoint(&checkpoint).unwrap();
-    let initial = fs::read(output.directory().join("manifest.json")).unwrap();
-    let mut old_reader = File::open(output.directory().join("manifest.json")).unwrap();
-
-    let candidate = output.candidate().unwrap();
-    let candidate_path = candidate.path().to_owned();
-
-    assert!(candidate_path.exists());
-    assert!(
-        !output
-            .directory()
-            .join("host.pending.sbom.cdx.json")
-            .exists()
-    );
-
-    drop(candidate);
-
-    assert!(!candidate_path.exists());
-
-    let mut result = JobResult::pending(&config.jobs[0]).unwrap();
-    result.fail(&"test-owned failure", Failure::new(FailureKind::Collection));
-    result.finish().unwrap();
-    checkpoint.record(result);
-    output.checkpoint(&checkpoint).unwrap();
-
-    let mut old_bytes = Vec::new();
-    old_reader.read_to_end(&mut old_bytes).unwrap();
-    // An already-open reader sees the old, complete inode, not an in-place rewrite.
-    assert_eq!(old_bytes, initial);
-    let latest = manifest(output.directory());
-    assert_eq!(
-        serde_json::from_slice::<Value>(&initial).unwrap()["results"],
-        json!([])
-    );
-    assert_eq!(latest["version"], 2);
-    assert_eq!(latest["results"].as_array().unwrap().len(), 1);
-    assert_failed(&latest["results"][0]);
-    assert_eq!(
-        latest["results"][0]["failure"],
-        json!({"kind": "collection"})
-    );
-    assert_eq!(entries(output.directory()), ["manifest.json"]);
-    assert_private(&output.directory().join("manifest.json"), 0o600);
 }
 
 #[test]
@@ -692,37 +617,6 @@ fn non_utf8_certificate_paths_and_refused_symlink_preserve_partial_then_success(
             "manifest.json"
         ]
     );
-}
-
-#[test]
-fn observed_scope_distinguishes_absent_and_explicitly_empty_values() {
-    let config = Config::parse(
-        &json!({
-            "version": 1, "output": {"directory": "unused"},
-            "applications": [{"name": "app", "target": {"type": "directory", "path": "/app"},
-                "sbom": {"enabled": true, "backend": "syft", "exclude": ["manual"]}}],
-        })
-        .to_string(),
-    )
-    .unwrap();
-    let job = &config.jobs[0];
-
-    let mut result = JobResult::pending(job).unwrap();
-    result.observed_scope(&CollectionOutcome::external());
-    let document = serde_json::to_value(&result).unwrap();
-    assert_eq!(document["target"], "/app");
-    assert_eq!(document["exclude"], json!(["manual"]));
-
-    result.observed_scope(&CollectionOutcome {
-        scope: ExecutionScope {
-            target: Some(String::new()),
-            exclusions: Some(vec![]),
-        },
-        ..CollectionOutcome::external()
-    });
-    let document = serde_json::to_value(&result).unwrap();
-    assert!(document.get("target").is_none());
-    assert!(document.get("exclude").is_none());
 }
 
 #[test]

@@ -5,6 +5,7 @@ mod config;
 mod doctor;
 mod job;
 mod json;
+mod manifest;
 mod output;
 mod path_encoding;
 mod plan;
@@ -123,7 +124,7 @@ fn run() -> Result<ExitCode, CliError> {
     match Args::parse().command {
         Command::Scan(options) => {
             let (config, plan) = options.load_plan()?;
-            let report = scan::run(&config, &plan)?;
+            let report = scan::run(&plan.jobs, &config.output_directory, config.timeout)?;
 
             println!("{}", report.directory.display());
 
@@ -184,7 +185,11 @@ mod import_tests;
 #[cfg(test)]
 mod job_tests;
 #[cfg(test)]
+mod manifest_tests;
+#[cfg(test)]
 mod native_tests;
+#[cfg(test)]
+mod output_tests;
 #[cfg(test)]
 mod path_encoding_tests;
 #[cfg(test)]

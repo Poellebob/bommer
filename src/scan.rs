@@ -8,12 +8,11 @@ use std::time::Duration;
 use crate::bom::validation::{ValidationError, Validator};
 use crate::collection::context::{CollectionContext, Interrupted};
 use crate::collection::failure::{Failure, FailureKind};
-use crate::collection::outcome::Status;
+use crate::collection::outcome::{ExecutionScope, Status};
 use crate::collectors::{self, CollectionError};
-use crate::config::Config;
 use crate::job::Job;
-use crate::output::{JobResult, Manifest, OutputError, RunOutput};
-use crate::plan::Plan;
+use crate::manifest::{JobResult, Manifest, ManifestError};
+use crate::output::{OutputError, RunOutput};
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ScanError {
@@ -22,6 +21,9 @@ pub(crate) enum ScanError {
 
     #[error(transparent)]
     Output(#[from] OutputError),
+
+    #[error(transparent)]
+    Manifest(#[from] ManifestError),
 
     #[error(transparent)]
     Validation(#[from] ValidationError),
@@ -67,18 +69,13 @@ impl JobFailure {
     }
 }
 
-pub(crate) fn run(config: &Config, plan: &Plan) -> Result<ScanReport, ScanError> {
+pub(crate) fn run(jobs: &[Job], root: &Path, timeout: Duration) -> Result<ScanReport, ScanError> {
     let cancelled = Arc::new(AtomicBool::new(false));
     for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
         signal_hook::flag::register(signal, Arc::clone(&cancelled)).map_err(ScanError::Signal)?;
     }
 
-    Scan::new()?.execute(
-        &plan.jobs,
-        &config.output_directory,
-        config.timeout,
-        cancelled,
-    )
+    Scan::new()?.execute(jobs, root, timeout, cancelled)
 }
 
 impl Scan {
@@ -106,8 +103,8 @@ impl Scan {
             let mut stderr = output.log(job)?;
 
             let collected = (|| -> Result<_, JobFailure> {
-                let outcome = collectors::collect(job, &context, &mut candidate, &mut stderr)?;
-                result.observed_scope(&outcome);
+                let mut outcome = collectors::collect(job, &context, &mut candidate, &mut stderr)?;
+                result.collected(&mut outcome);
                 context.check()?;
 
                 candidate.seek(SeekFrom::Start(0))?;
@@ -141,13 +138,18 @@ impl Scan {
                     );
                 }
                 Err(error) => {
-                    if let JobFailure::Collection(error) = &error
+                    let scope = if let JobFailure::Collection(error) = &error
                         && let Some((target, exclusions)) = error.execution_scope()
                     {
-                        result.execution_scope(target, exclusions);
-                    }
+                        ExecutionScope {
+                            target: Some(target.into()),
+                            exclusions: Some(exclusions.to_vec()),
+                        }
+                    } else {
+                        ExecutionScope::default()
+                    };
 
-                    result.fail(&error, error.details());
+                    result.fail(&error, error.details(), scope);
                 }
             }
 
