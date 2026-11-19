@@ -6,11 +6,11 @@ use std::sync::{Arc, atomic::AtomicBool};
 use std::time::Duration;
 
 use crate::bom::{ValidationError, Validator};
+use crate::collection_context::CollectionContext;
+use crate::collection_outcome::{Coverage, Status};
 use crate::collectors::import::{self, ImportError};
+use crate::job::{Backend, InventoryKind, Job, Scope, Target};
 use crate::json::DecodeError;
-use crate::model::{
-    Backend, CollectionContext, Coverage, InventoryKind, Job, Scope, Status, Target,
-};
 
 fn import_job(path: &Path) -> Job {
     Job::new(

@@ -17,10 +17,10 @@ use x509_parser::{
 };
 
 use crate::bom::document::Document;
-use crate::model::{
-    Backend, CollectionContext, CollectionOutcome, Coverage, Diagnostic, DiagnosticCode,
-    Interrupted, Job, Target, path_text,
-};
+use crate::collection_context::{CollectionContext, Interrupted};
+use crate::collection_outcome::{CollectionOutcome, Coverage, Diagnostic, DiagnosticCode};
+use crate::job::{Backend, Job, Target};
+use crate::path_encoding::path_text;
 
 #[derive(Debug, Error)]
 pub(crate) enum CertificateError {

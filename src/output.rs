@@ -9,7 +9,9 @@ use sha2::{Digest, Sha256};
 use tempfile::{NamedTempFile, TempDir};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-use crate::model::{Backend, CollectionOutcome, Coverage, Diagnostic, Failure, Job, Status};
+use crate::collection_outcome::{CollectionOutcome, Coverage, Diagnostic, Status};
+use crate::failure::Failure;
+use crate::job::{Backend, Job};
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum OutputError {
@@ -132,7 +134,7 @@ pub(crate) struct PublishedArtifact {
 #[derive(Debug, Serialize)]
 pub(crate) struct JobResult {
     name: String,
-    kind: crate::model::InventoryKind,
+    kind: crate::job::InventoryKind,
     #[serde(skip_serializing_if = "String::is_empty")]
     target: String,
     #[serde(rename = "sourceVersion", skip_serializing_if = "Option::is_none")]

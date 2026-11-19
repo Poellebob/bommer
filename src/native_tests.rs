@@ -11,11 +11,10 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 
 use crate::bom::Validator;
+use crate::collection_context::{CollectionContext, Interrupted};
+use crate::collection_outcome::{Coverage, DiagnosticCode, Status};
 use crate::collectors::{certificates, import, nix};
-use crate::model::{
-    Backend, CollectionContext, Coverage, DiagnosticCode, Interrupted, InventoryKind, Job, Name,
-    Scope, Status, Target,
-};
+use crate::job::{Backend, InventoryKind, Job, Name, Scope, Target};
 use crate::scan::Scan;
 
 // Public P-384 fixture from x509-parser's MIT/Apache-2.0 no_extensions.pem.

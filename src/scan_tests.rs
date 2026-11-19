@@ -15,12 +15,12 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::bom::Validator;
+use crate::collection_context::CollectionContext;
+use crate::collection_outcome::CollectionOutcome;
 use crate::collectors::external;
 use crate::config::Config;
-use crate::model::{
-    Backend, CollectionContext, CollectionOutcome, Failure, FailureKind, InventoryKind, Job, Name,
-    Scope, Target,
-};
+use crate::failure::{Failure, FailureKind};
+use crate::job::{Backend, InventoryKind, Job, Name, Scope, Target};
 use crate::output::{JobResult, Manifest, OutputError, RunOutput};
 use crate::scan::{Scan, ScanError, ScanReport};
 

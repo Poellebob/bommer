@@ -10,7 +10,9 @@ use serde_json::{Value, json};
 use thiserror::Error;
 
 use crate::bom::document::Document;
-use crate::model::{Backend, CollectionContext, CollectionOutcome, Coverage, Interrupted, Job};
+use crate::collection_context::{CollectionContext, Interrupted};
+use crate::collection_outcome::{CollectionOutcome, Coverage};
+use crate::job::{Backend, Job};
 use crate::process::{Process, ProcessError};
 
 #[derive(Debug, Error)]
@@ -31,6 +33,20 @@ pub(crate) enum NixError {
     InvalidMetadata,
     #[error("incomplete Nix closure")]
     IncompleteClosure { missing: PathBuf },
+}
+
+#[derive(Deserialize)]
+struct PathInfo {
+    #[serde(default, deserialize_with = "optional_string")]
+    path: String,
+    #[serde(rename = "narHash")]
+    nar_hash: String,
+    #[serde(rename = "narSize")]
+    nar_size: u64,
+    references: Vec<String>,
+    #[serde(default, deserialize_with = "optional_string")]
+    deriver: String,
+    version: Option<u64>,
 }
 
 fn store_path(path: &str) -> bool {
@@ -83,20 +99,6 @@ pub(crate) fn check(job: &Job) -> Result<(), NixError> {
     roots(job)?;
     Process::find_executable(OsStr::new("nix"))?;
     Ok(())
-}
-
-#[derive(Deserialize)]
-struct PathInfo {
-    #[serde(default, deserialize_with = "optional_string")]
-    path: String,
-    #[serde(rename = "narHash")]
-    nar_hash: String,
-    #[serde(rename = "narSize")]
-    nar_size: u64,
-    references: Vec<String>,
-    #[serde(default, deserialize_with = "optional_string")]
-    deriver: String,
-    version: Option<u64>,
 }
 
 fn optional_string<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
@@ -218,7 +220,7 @@ pub(crate) fn collect(
         findings,
         Coverage::DeclaredScope,
         vec![],
-        json!({"scope":"store-reference closure","storeDirectory":"/nix/store","configuredRoots":configured.iter().map(|path| crate::model::path_text(path)).collect::<Vec<_>>(),"resolvedRoots":roots,"nixVersion":version,"storeConnection":store}),
+        json!({"scope":"store-reference closure","storeDirectory":"/nix/store","configuredRoots":configured.iter().map(|path| crate::path_encoding::path_text(path)).collect::<Vec<_>>(),"resolvedRoots":roots,"nixVersion":version,"storeConnection":store}),
         Some(version.into()),
     ))
 }

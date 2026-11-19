@@ -14,6 +14,18 @@ use thiserror::Error;
 const BOM_LIMIT: usize = 64 << 20;
 const LOG_LIMIT: usize = 1 << 20;
 
+#[derive(Debug, Clone)]
+pub(crate) struct CommandSpec {
+    executable: OsString,
+    arguments: Vec<OsString>,
+}
+
+#[derive(Debug, PartialEq, Eq, Error)]
+pub(crate) enum CommandError {
+    #[error("command requires an executable")]
+    EmptyExecutable,
+}
+
 #[derive(Debug, Error)]
 pub(crate) enum ProcessError {
     #[error("cannot execute {executable:?}")]
@@ -50,6 +62,39 @@ pub(crate) struct ProcessOutput {
     stderr: Vec<u8>,
 }
 
+// Keep the group identity even after the direct child has been reaped: descendants
+// can still hold our pipes open. Drop also covers errors and unwinding.
+struct ProcessGuard {
+    child: Child,
+    group: Pid,
+}
+
+pub(crate) struct Process;
+
+impl CommandSpec {
+    pub(crate) fn new(
+        executable: OsString,
+        arguments: Vec<OsString>,
+    ) -> Result<Self, CommandError> {
+        if executable.is_empty() {
+            return Err(CommandError::EmptyExecutable);
+        }
+
+        Ok(Self {
+            executable,
+            arguments,
+        })
+    }
+
+    pub(crate) fn executable(&self) -> &OsStr {
+        &self.executable
+    }
+
+    pub(crate) fn arguments(&self) -> &[OsString] {
+        &self.arguments
+    }
+}
+
 impl ProcessOutput {
     pub(crate) fn stdout(&self) -> &[u8] {
         &self.stdout
@@ -60,21 +105,12 @@ impl ProcessOutput {
     }
 }
 
-// Keep the group identity even after the direct child has been reaped: descendants
-// can still hold our pipes open. Drop also covers errors and unwinding.
-struct ProcessGuard {
-    child: Child,
-    group: Pid,
-}
-
 impl Drop for ProcessGuard {
     fn drop(&mut self) {
         let _ = kill_process_group(self.group, Signal::KILL);
         let _ = self.child.wait();
     }
 }
-
-pub(crate) struct Process;
 
 impl Process {
     pub(crate) fn find_executable(executable: &OsStr) -> Result<PathBuf, ProcessError> {

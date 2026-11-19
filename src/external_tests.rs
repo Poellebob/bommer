@@ -3,10 +3,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::sync::{Arc, atomic::AtomicBool};
 use std::time::Duration;
 
+use crate::collection_context::CollectionContext;
 use crate::collectors::external::{self, ExternalError};
-use crate::model::{
-    Backend, CollectionContext, CommandSpec, InventoryKind, Job, Name, Scope, Target,
-};
+use crate::job::{Backend, InventoryKind, Job, Name, Scope, Target};
+use crate::process::CommandSpec;
 
 #[test]
 fn collector_arguments_match_backend_contracts() {
@@ -234,7 +234,10 @@ fn doctor_checks_files_without_executing_collector() {
     assert_eq!(output, b"bom");
     assert_eq!(stderr, b"log");
     assert_eq!(std::fs::read(marker).unwrap(), b"executed");
-    assert!(matches!(result.coverage(), crate::model::Coverage::Unknown));
+    assert!(matches!(
+        result.coverage(),
+        crate::collection_outcome::Coverage::Unknown
+    ));
 }
 
 #[test]

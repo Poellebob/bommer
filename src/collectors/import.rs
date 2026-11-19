@@ -6,8 +6,10 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::collection_context::{CollectionContext, Interrupted};
+use crate::collection_outcome::{CollectionOutcome, Coverage};
+use crate::job::{Backend, Job};
 use crate::json;
-use crate::model::{Backend, CollectionContext, CollectionOutcome, Coverage, Interrupted, Job};
 
 #[derive(Debug, Error)]
 pub(crate) enum ImportError {
@@ -120,7 +122,7 @@ pub(crate) fn collect(
     let Backend::Import { path } = job.backend() else {
         return Err(ImportError::Options);
     };
-    let evidence = json!({"origin":"imported", "sourcePath":crate::model::path_text(path), "sourceSHA256":hex::encode(Sha256::digest(&data)), "discovery":"not-observed-locally", "applicationAssociation":"configuration-declared-not-verified"});
+    let evidence = json!({"origin":"imported", "sourcePath":crate::path_encoding::path_text(path), "sourceSHA256":hex::encode(Sha256::digest(&data)), "discovery":"not-observed-locally", "applicationAssociation":"configuration-declared-not-verified"});
 
     context.check()?;
     output.write_all(&data)?;

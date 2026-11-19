@@ -1,10 +1,14 @@
 mod bom;
+mod collection_context;
+mod collection_outcome;
 mod collectors;
 mod config;
 mod doctor;
+mod failure;
+mod job;
 mod json;
-mod model;
 mod output;
+mod path_encoding;
 mod plan;
 mod process;
 mod scan;
@@ -77,7 +81,7 @@ enum CliError {
     Config(#[from] config::ConfigError),
 
     #[error(transparent)]
-    Application(#[from] model::NameError),
+    Application(#[from] job::NameError),
 
     #[error(transparent)]
     Plan(#[from] plan::PlanError),
@@ -91,11 +95,11 @@ impl Options {
         let config = config::Config::load(&self.config)?;
 
         let kind = self.only.map(|kind| match kind {
-            InventoryFilter::Hbom => model::InventoryKind::Hbom,
-            InventoryFilter::Sbom => model::InventoryKind::Sbom,
-            InventoryFilter::Cbom => model::InventoryKind::Cbom,
+            InventoryFilter::Hbom => job::InventoryKind::Hbom,
+            InventoryFilter::Sbom => job::InventoryKind::Sbom,
+            InventoryFilter::Cbom => job::InventoryKind::Cbom,
         });
-        let application = self.application.map(model::Name::new).transpose()?;
+        let application = self.application.map(job::Name::new).transpose()?;
         let plan = plan::Plan::build(&config, &plan::Selection::new(kind, application))?;
 
         Ok((config, plan))
@@ -162,11 +166,13 @@ fn terminal_error(error: &dyn std::error::Error) -> String {
 #[cfg(test)]
 mod architecture_tests;
 #[cfg(test)]
-mod behavior_tests;
-#[cfg(test)]
 mod bom_tests;
 #[cfg(test)]
 mod cli_tests;
+#[cfg(test)]
+mod collection_context_tests;
+#[cfg(test)]
+mod collection_outcome_tests;
 #[cfg(test)]
 mod config_tests;
 #[cfg(test)]
@@ -176,7 +182,11 @@ mod external_tests;
 #[cfg(test)]
 mod import_tests;
 #[cfg(test)]
+mod job_tests;
+#[cfg(test)]
 mod native_tests;
+#[cfg(test)]
+mod path_encoding_tests;
 #[cfg(test)]
 mod process_tests;
 #[cfg(test)]

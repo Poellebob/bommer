@@ -5,18 +5,12 @@ use std::collections::HashSet;
 use thiserror::Error;
 
 use crate::config::Config;
-use crate::model::{InventoryKind, Job, Name};
+use crate::job::{InventoryKind, Job, Name};
 
 #[derive(Debug, Default)]
 pub(crate) struct Selection {
     kind: Option<InventoryKind>,
     application: Option<Name>,
-}
-
-impl Selection {
-    pub(crate) fn new(kind: Option<InventoryKind>, application: Option<Name>) -> Self {
-        Self { kind, application }
-    }
 }
 
 #[derive(Debug)]
@@ -32,6 +26,12 @@ pub(crate) enum PlanError {
     EmptySelection,
     #[error("artifact name collision: {name}")]
     ArtifactCollision { name: String },
+}
+
+impl Selection {
+    pub(crate) fn new(kind: Option<InventoryKind>, application: Option<Name>) -> Self {
+        Self { kind, application }
+    }
 }
 
 impl Plan {

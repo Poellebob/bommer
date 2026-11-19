@@ -1,11 +1,15 @@
 //! Check collector readiness without executing collections.
 
 use crate::collectors::{self, CollectionError};
-use crate::model::Job;
+use crate::job::Job;
 
 pub(crate) struct Readiness {
     name: String,
     result: Result<(), CollectionError>,
+}
+
+pub(crate) struct Report {
+    results: Vec<Readiness>,
 }
 
 impl Readiness {
@@ -16,10 +20,6 @@ impl Readiness {
     pub(crate) fn result(&self) -> &Result<(), CollectionError> {
         &self.result
     }
-}
-
-pub(crate) struct Report {
-    results: Vec<Readiness>,
 }
 
 impl Report {

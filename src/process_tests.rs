@@ -3,7 +3,32 @@ use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::process::{Process, ProcessError, Stream};
+use crate::process::{CommandError, CommandSpec, Process, ProcessError, Stream};
+
+#[test]
+fn command_construction_preserves_literal_arguments() {
+    let executable = std::ffi::OsString::from("scanner");
+    let arguments = vec!["a b".into(), "$(touch unexpected)".into(), "*.json".into()];
+
+    let command = CommandSpec::new(executable, arguments).unwrap();
+
+    assert_eq!(command.executable(), "scanner");
+    assert_eq!(
+        command.arguments(),
+        &["a b", "$(touch unexpected)", "*.json"]
+    );
+}
+
+#[test]
+fn commands_require_an_executable() {
+    let executable = std::ffi::OsString::new();
+    let arguments = vec!["scan".into()];
+
+    assert!(matches!(
+        CommandSpec::new(executable, arguments),
+        Err(CommandError::EmptyExecutable)
+    ));
+}
 
 #[test]
 fn capture_preserves_both_pipes_and_literal_arguments() {

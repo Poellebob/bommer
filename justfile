@@ -30,7 +30,7 @@ schema-test:
 
 # Run integration fixtures with fake collectors/Nix, not live host inventory.
 integration-test:
-    cargo test --locked --bin bommer behavior_tests:: -- --nocapture
+    cargo test --locked --bin bommer job_tests:: -- --nocapture
     cargo test --locked --bin bommer external_tests:: -- --nocapture
     cargo test --locked --bin bommer native_tests:: -- --nocapture
     cargo test --locked --bin bommer import_tests:: -- --nocapture

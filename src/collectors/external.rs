@@ -5,9 +5,9 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use crate::model::{
-    Backend, CollectionContext, CollectionOutcome, InventoryKind, Job, Scope, Target,
-};
+use crate::collection_context::CollectionContext;
+use crate::collection_outcome::CollectionOutcome;
+use crate::job::{Backend, InventoryKind, Job, Scope, Target};
 use crate::process::{Process, ProcessError};
 
 #[derive(Debug, Error)]
@@ -33,6 +33,13 @@ pub(crate) enum ExternalError {
     },
     #[error("target is not a directory: {path:?}")]
     NotDirectory { path: PathBuf },
+}
+
+struct Prepared {
+    executable: OsString,
+    arguments: Vec<OsString>,
+    exclusions: Vec<String>,
+    target: String,
 }
 
 pub(crate) fn check(job: &Job) -> Result<(), ExternalError> {
@@ -95,13 +102,6 @@ pub(crate) fn collect(
     Ok(CollectionOutcome::external()
         .with_exclusions(prepared.exclusions)
         .with_target(prepared.target))
-}
-
-struct Prepared {
-    executable: OsString,
-    arguments: Vec<OsString>,
-    exclusions: Vec<String>,
-    target: String,
 }
 
 #[cfg(test)]
@@ -187,7 +187,9 @@ fn prepare_command(job: &Job, context: &CollectionContext) -> Result<Prepared, E
     let mut seen = std::collections::HashSet::new();
     for pattern in patterns {
         if seen.insert(pattern.clone()) {
-            exclusions.push(crate::model::path_text(std::path::Path::new(&pattern)));
+            exclusions.push(crate::path_encoding::path_text(std::path::Path::new(
+                &pattern,
+            )));
             arguments.extend([OsString::from("--exclude"), pattern]);
         }
     }
@@ -196,7 +198,7 @@ fn prepare_command(job: &Job, context: &CollectionContext) -> Result<Prepared, E
         executable,
         arguments,
         exclusions,
-        target: crate::model::path_text(std::path::Path::new(&target)),
+        target: crate::path_encoding::path_text(std::path::Path::new(&target)),
     })
 }
 

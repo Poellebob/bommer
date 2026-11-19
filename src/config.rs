@@ -8,9 +8,8 @@ use std::time::Duration;
 use serde::{Deserialize, Deserializer};
 use thiserror::Error;
 
-use crate::model::{
-    Backend, CommandSpec, InventoryKind, Job, JobError, Name, NameError, Scope, Target,
-};
+use crate::job::{Backend, InventoryKind, Job, JobError, Name, NameError, Scope, Target};
+use crate::process::CommandSpec;
 
 #[derive(Debug)]
 pub(crate) struct Config {

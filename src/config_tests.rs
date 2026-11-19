@@ -2,7 +2,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::config::{CollectorError, Config, ConfigError};
-use crate::model::{Backend, InventoryKind, JobError, Name, Target};
+use crate::job::{Backend, InventoryKind, JobError, Name, Target};
 use crate::plan::{Plan, PlanError, Selection};
 
 const BASE: &str = "version: 1\noutput: {directory: /tmp/inventories}\n";

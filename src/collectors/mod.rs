@@ -3,9 +3,10 @@ pub(crate) mod external;
 pub(crate) mod import;
 pub(crate) mod nix;
 
-use crate::model::{
-    Backend, CollectionContext, CollectionOutcome, Failure, FailureKind, Interrupted, Job,
-};
+use crate::collection_context::{CollectionContext, Interrupted};
+use crate::collection_outcome::CollectionOutcome;
+use crate::failure::{Failure, FailureKind};
+use crate::job::{Backend, Job};
 use crate::process::{ProcessError, Stream};
 use std::io::Write;
 

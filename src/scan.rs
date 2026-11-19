@@ -6,9 +6,12 @@ use std::sync::{Arc, atomic::AtomicBool};
 use std::time::Duration;
 
 use crate::bom::{ValidationError, Validator};
+use crate::collection_context::{CollectionContext, Interrupted};
+use crate::collection_outcome::Status;
 use crate::collectors::{self, CollectionError};
 use crate::config::Config;
-use crate::model::{CollectionContext, Failure, FailureKind, Interrupted, Job, Status};
+use crate::failure::{Failure, FailureKind};
+use crate::job::Job;
 use crate::output::{JobResult, Manifest, OutputError, RunOutput};
 use crate::plan::Plan;
 
@@ -41,6 +44,16 @@ enum JobFailure {
     Read(#[from] io::Error),
 }
 
+#[derive(Debug)]
+pub(crate) struct ScanReport {
+    directory: PathBuf,
+    unsuccessful: bool,
+}
+
+pub(crate) struct Scan {
+    validator: Validator,
+}
+
 impl JobFailure {
     fn details(&self) -> Failure {
         match self {
@@ -54,12 +67,6 @@ impl JobFailure {
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct ScanReport {
-    directory: PathBuf,
-    unsuccessful: bool,
-}
-
 impl ScanReport {
     pub(crate) fn directory(&self) -> &Path {
         &self.directory
@@ -68,10 +75,6 @@ impl ScanReport {
     pub(crate) fn is_unsuccessful(&self) -> bool {
         self.unsuccessful
     }
-}
-
-pub(crate) struct Scan {
-    validator: Validator,
 }
 
 pub(crate) fn run(config: &Config, plan: &Plan) -> Result<ScanReport, ScanError> {
