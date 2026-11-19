@@ -48,6 +48,7 @@ fn open(job: &Job) -> Result<File, ImportError> {
     if metadata.len() > LIMIT {
         return Err(ImportError::LimitExceeded);
     }
+
     Ok(file)
 }
 
@@ -75,11 +76,13 @@ pub(crate) fn collect(
             return Err(ImportError::LimitExceeded);
         }
     }
+
     // Do not use the BOM validator here: imports are leaves and preserve producer graphs.
     let document = json::decode(&data)?;
     if !document.is_object() {
         return Err(ImportError::InvalidJson);
     }
+
     let mut pending = vec![&document];
     let mut findings = 0;
     while let Some(value) = pending.pop() {
@@ -113,12 +116,15 @@ pub(crate) fn collect(
     {
         return Err(ImportError::NoCryptographicAssets);
     }
+
     let Backend::Import { path } = job.backend() else {
         return Err(ImportError::Options);
     };
     let evidence = json!({"origin":"imported", "sourcePath":crate::model::path_text(path), "sourceSHA256":hex::encode(Sha256::digest(&data)), "discovery":"not-observed-locally", "applicationAssociation":"configuration-declared-not-verified"});
+
     context.check()?;
     output.write_all(&data)?;
+
     Ok(CollectionOutcome::observed(
         findings,
         Coverage::ProducerDeclaredUnverified,

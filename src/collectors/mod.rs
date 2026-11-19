@@ -32,6 +32,7 @@ impl CollectionError {
             _ => None,
         }
     }
+
     pub(crate) fn details(&self) -> Failure {
         let interruption = match self {
             Self::Interrupted(error)
@@ -46,6 +47,7 @@ impl CollectionError {
                 Interrupted::Timeout => FailureKind::Timeout,
             });
         }
+
         // Classify sources, not Display strings; raw collector stderr never enters this path.
         let mut error: &(dyn std::error::Error + 'static) = self;
         loop {
@@ -76,6 +78,7 @@ impl CollectionError {
             if error.is::<std::io::Error>() {
                 return Failure::new(FailureKind::Io);
             }
+
             match error.source() {
                 Some(source) => error = source,
                 None => return Failure::new(FailureKind::Collection),

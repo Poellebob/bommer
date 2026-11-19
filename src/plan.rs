@@ -1,3 +1,5 @@
+//! Select configured jobs and reject empty or conflicting execution plans.
+
 use std::collections::HashSet;
 
 use thiserror::Error;
@@ -39,6 +41,7 @@ impl Plan {
         {
             return Err(PlanError::UnknownApplication { name: name.clone() });
         }
+
         let mut jobs = Vec::new();
         let mut stems = HashSet::new();
         for job in config.jobs() {
@@ -49,15 +52,18 @@ impl Plan {
             {
                 continue;
             }
+
             let stem = job.stem();
             if !stems.insert(stem.clone()) {
                 return Err(PlanError::ArtifactCollision { name: stem });
             }
             jobs.push(job.clone());
         }
+
         if jobs.is_empty() {
             return Err(PlanError::EmptySelection);
         }
+
         Ok(Self { jobs })
     }
 

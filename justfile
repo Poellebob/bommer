@@ -36,7 +36,8 @@ integration-test:
     cargo test --locked --bin bommer import_tests:: -- --nocapture
     cargo test --locked --test cli
     cargo test --locked --bin bommer process_tests:: -- --nocapture
-    cargo test --locked --bin bommer runner_tests:: -- --nocapture
+    cargo test --locked --bin bommer doctor_tests:: -- --nocapture
+    cargo test --locked --bin bommer scan_tests:: -- --nocapture
 
 # Check module dependency direction and the architecture checker fixtures.
 architecture-test:

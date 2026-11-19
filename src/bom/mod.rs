@@ -67,6 +67,7 @@ impl Validator {
         if object.get("bomFormat").and_then(serde_json::Value::as_str) != Some("CycloneDX") {
             return Err(ValidationError::InvalidBomFormat);
         }
+
         let version = object
             .get("specVersion")
             .and_then(serde_json::Value::as_str)
@@ -83,6 +84,7 @@ impl Validator {
         if external && !object.contains_key("version") {
             return Err(ValidationError::MissingDocumentVersion);
         }
+
         schema
             .validate(&document)
             .map_err(|source| ValidationError::SchemaViolation {
@@ -98,6 +100,7 @@ impl Validator {
         {
             return Err(ValidationError::EmptyExternalInventory);
         }
+
         let component_count = schema.component_count(&document);
         Ok(DocumentSummary {
             version: version.to_owned(),

@@ -24,6 +24,7 @@ pub(crate) enum ProcessError {
     },
     #[error("executable not found: {executable:?}")]
     MissingExecutable { executable: OsString },
+
     #[error("process exited unsuccessfully ({code:?})")]
     Exit { code: Option<i32> },
     #[error("process timed out")]
@@ -32,6 +33,7 @@ pub(crate) enum ProcessError {
     Cancelled,
     #[error("{stream:?} exceeded {limit} bytes")]
     OutputLimit { stream: Stream, limit: usize },
+
     #[error("process I/O failed")]
     Io(#[from] io::Error),
 }
@@ -52,6 +54,7 @@ impl ProcessOutput {
     pub(crate) fn stdout(&self) -> &[u8] {
         &self.stdout
     }
+
     pub(crate) fn stderr(&self) -> &[u8] {
         &self.stderr
     }
@@ -91,6 +94,7 @@ impl Process {
                 }
             }
         }
+
         Err(ProcessError::MissingExecutable {
             executable: executable.to_owned(),
         })
@@ -114,6 +118,7 @@ impl Process {
             stderr_limit,
             &mut output,
         )?;
+
         Ok(output)
     }
 
@@ -127,6 +132,7 @@ impl Process {
         output: &mut ProcessOutput,
     ) -> Result<(), ProcessError> {
         check_interruption(deadline, cancelled)?;
+
         let child = Command::new(executable)
             .args(arguments)
             .stdin(Stdio::null())
@@ -140,14 +146,17 @@ impl Process {
             })?;
         let group = Pid::from_raw(child.id() as i32).expect("child has a positive PID");
         let mut guard = ProcessGuard { child, group };
+
         let mut stdout = guard.child.stdout.take().expect("stdout is piped");
         let mut stderr = guard.child.stderr.take().expect("stderr is piped");
         nonblocking(&stdout)?;
         nonblocking(&stderr)?;
         let (mut stdout_done, mut stderr_done) = (false, false);
         let mut status = None;
+
         let result = (|| loop {
             check_interruption(deadline, cancelled)?;
+
             let mut progress = false;
             if !stdout_done {
                 progress |= drain(
@@ -167,6 +176,7 @@ impl Process {
                     &mut stderr_done,
                 )?;
             }
+
             if status.is_none() {
                 status = guard.child.try_wait()?;
             }
@@ -182,10 +192,12 @@ impl Process {
                     })
                 };
             }
+
             if !progress {
                 std::thread::sleep(Duration::from_millis(5));
             }
         })();
+
         if result.is_err() {
             // Stop writers before draining diagnostics already queued at cancellation.
             // Nonblocking reads also bound cleanup if a detached descendant holds a pipe.
@@ -203,6 +215,7 @@ impl Process {
                 }
             }
         }
+
         result
     }
 
@@ -226,12 +239,15 @@ impl Process {
             LOG_LIMIT,
             &mut output,
         );
+
         let log_result = stderr.write_all(output.stderr());
         // Preserve the process failure even if its diagnostic writer also fails.
         result?;
         log_result?;
+
         check_interruption(deadline, cancelled)?;
         stdout.write_all(output.stdout())?;
+
         Ok(())
     }
 }
@@ -271,6 +287,7 @@ fn drain(
             if count > remaining {
                 return Err(ProcessError::OutputLimit { stream, limit });
             }
+
             Ok(true)
         }
         Err(error)

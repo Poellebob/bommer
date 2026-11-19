@@ -22,9 +22,9 @@ use crate::model::{
     Scope, Target,
 };
 use crate::output::{JobResult, Manifest, OutputError, RunOutput};
-use crate::runner::{RunError, RunReport, Runner};
+use crate::scan::{Scan, ScanError, ScanReport};
 
-const BOM: &str = r#"{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,"components":[{"type":"library","name":"runner-fixture","version":"2.3.4"}]}"#;
+const BOM: &str = r#"{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,"components":[{"type":"library","name":"scan-fixture","version":"2.3.4"}]}"#;
 
 fn script(directory: &Path, name: &str, body: &str) -> PathBuf {
     let path = directory.join(name);
@@ -56,8 +56,8 @@ fn command_config(commands: &[(&str, &Path)]) -> Config {
     .unwrap()
 }
 
-fn execute(config: &Config, root: &Path, cancelled: bool) -> RunReport {
-    Runner::new()
+fn execute(config: &Config, root: &Path, cancelled: bool) -> ScanReport {
+    Scan::new()
         .unwrap()
         .execute(
             config.jobs(),
@@ -105,20 +105,24 @@ fn assert_failed(result: &Value) {
 }
 
 #[test]
-fn successful_run_publishes_validated_artifact_hash_and_private_v2_manifest() {
+fn successful_scan_publishes_validated_artifact_hash_and_private_v2_manifest() {
     let temporary = tempfile::tempdir().unwrap();
     let executable = script(temporary.path(), "success", &format!("printf '%s' '{BOM}'"));
     let config = command_config(&[("packages", &executable)]);
     let root = temporary.path().join("output");
+
     let report = execute(&config, &root, false);
+
     assert!(!report.is_unsuccessful());
     assert_eq!(report.directory().parent(), Some(root.as_path()));
     assert_eq!(entries(&root).len(), 2); // Lock and retained run directory.
+
     let document = manifest(report.directory());
     assert_eq!(document["version"], 2);
     assert_eq!(document["bommerVersion"], env!("CARGO_PKG_VERSION"));
     assert_eq!(document["validation"], "json-schema-offline");
     assert_eq!(document["results"].as_array().unwrap().len(), 1);
+
     let result = &document["results"][0];
     assert_eq!(result["name"], "host");
     assert_eq!(result["inventory"], "packages");
@@ -146,6 +150,7 @@ fn successful_run_publishes_validated_artifact_hash_and_private_v2_manifest() {
     let validated = Validator::new().unwrap().validate(&bytes, true).unwrap();
     assert_eq!(validated.component_count(), 1);
     assert_eq!(validated.spec_version(), "1.6");
+
     assert_eq!(
         entries(report.directory()),
         [
@@ -154,6 +159,7 @@ fn successful_run_publishes_validated_artifact_hash_and_private_v2_manifest() {
             "manifest.json"
         ]
     );
+
     assert_private(&root, 0o700);
     assert_private(&root.join(".lock"), 0o600);
     assert_private(report.directory(), 0o700);
@@ -178,11 +184,13 @@ fn invalid_collector_output_is_not_published_and_candidates_are_removed() {
     ] {
         let executable = script(temporary.path(), name, &format!("printf '%s' '{fixture}'"));
         let config = command_config(&[("invalid", &executable)]);
+
         let report = execute(
             &config,
             &temporary.path().join(format!("output-{name}")),
             false,
         );
+
         assert!(report.is_unsuccessful(), "{name}");
         let document = manifest(report.directory());
         assert_eq!(document["results"].as_array().unwrap().len(), 1);
@@ -212,7 +220,9 @@ fn failed_job_preserves_stderr_and_does_not_prevent_the_next_job() {
         &format!("printf 'second collector ran\\n' >&2\nprintf '%s' '{BOM}'"),
     );
     let config = command_config(&[("first", &first), ("second", &second)]);
+
     let report = execute(&config, &temporary.path().join("output"), false);
+
     assert!(report.is_unsuccessful());
     let document = manifest(report.directory());
     let results = document["results"].as_array().unwrap();
@@ -223,6 +233,7 @@ fn failed_job_preserves_stderr_and_does_not_prevent_the_next_job() {
         results[0]["failure"],
         json!({"kind": "process-exit", "exitCode": 7})
     );
+
     assert_eq!(results[1]["inventory"], "second");
     assert_eq!(results[1]["status"], "collected");
     assert_eq!(results[1]["findings"], 1);
@@ -231,6 +242,7 @@ fn failed_job_preserves_stderr_and_does_not_prevent_the_next_job() {
         fs::read(report.directory().join("host.second.sbom.cdx.json")).unwrap(),
         BOM.as_bytes()
     );
+
     assert_eq!(
         fs::read_to_string(report.directory().join("host.first.sbom.stderr.log")).unwrap(),
         "first collector failed\n"
@@ -262,7 +274,9 @@ fn missing_certificates_retain_a_valid_empty_partial_artifact() {
             "collector": {"enabled": true, "backend": "certificates", "certificates": {"paths": [missing]}},
         }]},
     }).to_string()).unwrap();
+
     let report = execute(&config, &temporary.path().join("output"), false);
+
     assert!(report.is_unsuccessful());
     let document = manifest(report.directory());
     assert_eq!(document["results"].as_array().unwrap().len(), 1);
@@ -276,6 +290,7 @@ fn missing_certificates_retain_a_valid_empty_partial_artifact() {
         json!([{"code": "missing-path", "path": missing}])
     );
     assert!(result.get("error").is_none());
+
     assert_eq!(result["artifact"], "host.certificates.cbom.cdx.json");
     let bytes = fs::read(report.directory().join("host.certificates.cbom.cdx.json")).unwrap();
     assert_eq!(result["sha256"], hex::encode(Sha256::digest(&bytes)));
@@ -293,7 +308,7 @@ fn missing_certificates_retain_a_valid_empty_partial_artifact() {
 }
 
 #[test]
-fn pre_cancelled_run_records_all_failures_without_launching_collectors() {
+fn pre_cancelled_scan_records_all_failures_without_launching_collectors() {
     let temporary = tempfile::tempdir().unwrap();
     let marker = temporary.path().join("launched");
     let executable = script(
@@ -305,7 +320,9 @@ fn pre_cancelled_run_records_all_failures_without_launching_collectors() {
         ),
     );
     let config = command_config(&[("first", &executable), ("second", &executable)]);
+
     let report = execute(&config, &temporary.path().join("output"), true);
+
     assert!(report.is_unsuccessful());
     assert!(!marker.exists());
     let document = manifest(report.directory());
@@ -347,8 +364,9 @@ fn held_output_lock_returns_typed_error_without_creating_a_run() {
         .open(root.join(".lock"))
         .unwrap();
     flock(&lock, FlockOperation::NonBlockingLockExclusive).unwrap();
-    let runner = Runner::new().unwrap();
-    let error = runner
+    let scan = Scan::new().unwrap();
+
+    let error = scan
         .execute(
             &[],
             &root,
@@ -356,10 +374,13 @@ fn held_output_lock_returns_typed_error_without_creating_a_run() {
             Arc::new(AtomicBool::new(false)),
         )
         .unwrap_err();
-    assert!(matches!(error, RunError::Output(OutputError::Locked)));
+
+    assert!(matches!(error, ScanError::Output(OutputError::Locked)));
     assert_eq!(entries(&root), [".lock"]);
+
     drop(lock);
-    let report = runner
+
+    let report = scan
         .execute(
             &[],
             &root,
@@ -367,6 +388,7 @@ fn held_output_lock_returns_typed_error_without_creating_a_run() {
             Arc::new(AtomicBool::new(false)),
         )
         .unwrap();
+
     assert!(!report.is_unsuccessful());
     assert_eq!(manifest(report.directory())["results"], json!([]));
 }
@@ -381,8 +403,10 @@ fn checkpoints_replace_complete_manifests_and_unpublished_candidates_are_cleaned
     output.checkpoint(&checkpoint).unwrap();
     let initial = fs::read(output.directory().join("manifest.json")).unwrap();
     let mut old_reader = File::open(output.directory().join("manifest.json")).unwrap();
+
     let candidate = output.candidate().unwrap();
     let candidate_path = candidate.path().to_owned();
+
     assert!(candidate_path.exists());
     assert!(
         !output
@@ -390,13 +414,17 @@ fn checkpoints_replace_complete_manifests_and_unpublished_candidates_are_cleaned
             .join("host.pending.sbom.cdx.json")
             .exists()
     );
+
     drop(candidate);
+
     assert!(!candidate_path.exists());
+
     let mut result = JobResult::pending(&config.jobs()[0]).unwrap();
     result.fail(&"test-owned failure", Failure::new(FailureKind::Collection));
     result.finish().unwrap();
     checkpoint.record(result);
     output.checkpoint(&checkpoint).unwrap();
+
     let mut old_bytes = Vec::new();
     old_reader.read_to_end(&mut old_bytes).unwrap();
     // An already-open reader sees the old, complete inode, not an in-place rewrite.
@@ -418,7 +446,7 @@ fn checkpoints_replace_complete_manifests_and_unpublished_candidates_are_cleaned
 }
 
 #[test]
-fn timed_out_runner_persists_timeout_instead_of_cancellation() {
+fn timed_out_scan_persists_timeout_instead_of_cancellation() {
     let temporary = tempfile::tempdir().unwrap();
     let executable = script(
         temporary.path(),
@@ -426,7 +454,8 @@ fn timed_out_runner_persists_timeout_instead_of_cancellation() {
         "printf 'waiting\\n' >&2\nexec sleep 60",
     );
     let config = command_config(&[("slow", &executable)]);
-    let report = Runner::new()
+
+    let report = Scan::new()
         .unwrap()
         .execute(
             config.jobs(),
@@ -435,6 +464,7 @@ fn timed_out_runner_persists_timeout_instead_of_cancellation() {
             Arc::new(AtomicBool::new(false)),
         )
         .unwrap();
+
     assert!(report.is_unsuccessful());
     let document = manifest(report.directory());
     assert_failed(&document["results"][0]);
@@ -465,13 +495,15 @@ fn active_cancellation_after_readiness_persists_cancelled_and_stderr() {
         ),
     );
     let config = command_config(&[("active", &executable)]);
-    let runner = Runner::new().unwrap();
+    let scan = Scan::new().unwrap();
     let root = temporary.path().join("output");
     let cancelled = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&cancelled);
+
     let report = std::thread::scope(|scope| {
         let worker =
-            scope.spawn(|| runner.execute(config.jobs(), &root, Duration::from_secs(20), flag));
+            scope.spawn(|| scan.execute(config.jobs(), &root, Duration::from_secs(20), flag));
+
         let deadline = Instant::now() + Duration::from_secs(10);
         while !ready.exists() && Instant::now() < deadline && !worker.is_finished() {
             std::thread::sleep(Duration::from_millis(5));
@@ -483,6 +515,7 @@ fn active_cancellation_after_readiness_persists_cancelled_and_stderr() {
         assert!(was_ready, "collector did not signal readiness");
         result
     });
+
     assert!(report.is_unsuccessful());
     let document = manifest(report.directory());
     assert_eq!(document["results"].as_array().unwrap().len(), 1);
@@ -502,7 +535,7 @@ fn active_cancellation_after_readiness_persists_cancelled_and_stderr() {
 }
 
 #[test]
-fn oversized_runner_stdout_persists_stream_and_limit_without_an_artifact() {
+fn oversized_scan_stdout_persists_stream_and_limit_without_an_artifact() {
     let temporary = tempfile::tempdir().unwrap();
     let executable = script(
         temporary.path(),
@@ -510,7 +543,9 @@ fn oversized_runner_stdout_persists_stream_and_limit_without_an_artifact() {
         "printf 'large output\\n' >&2\nhead -c 67108865 /dev/zero",
     );
     let config = command_config(&[("large", &executable)]);
+
     let report = execute(&config, &temporary.path().join("output"), false);
+
     assert!(report.is_unsuccessful());
     let document = manifest(report.directory());
     assert_failed(&document["results"][0]);
@@ -547,7 +582,9 @@ fn relative_certificate_target_and_dot_path_record_the_effective_absolute_target
         "applications": [{"name": "app", "target": {"type": "directory", "path": relative.join(".")},
             "cbom": {"enabled": true, "backend": "certificates", "certificates": {"paths": ["."]}}}],
     }).to_string()).unwrap();
+
     let report = execute(&config, &temporary.path().join("output"), false);
+
     assert!(!report.is_unsuccessful());
     let document = manifest(report.directory());
     let result = &document["results"][0];
@@ -592,7 +629,8 @@ fn non_utf8_certificate_paths_and_refused_symlink_preserve_partial_then_success(
     let executable = script(temporary.path(), "next", &format!("printf '%s' '{BOM}'"));
     let next = command_config(&[("next", &executable)]);
     let jobs = [certificate_job, next.jobs()[0].clone()];
-    let report = Runner::new()
+
+    let report = Scan::new()
         .unwrap()
         .execute(
             &jobs,
@@ -601,6 +639,7 @@ fn non_utf8_certificate_paths_and_refused_symlink_preserve_partial_then_success(
             Arc::new(AtomicBool::new(false)),
         )
         .unwrap();
+
     assert!(report.is_unsuccessful());
     let document = manifest(report.directory());
     let results = document["results"].as_array().unwrap();
@@ -623,6 +662,7 @@ fn non_utf8_certificate_paths_and_refused_symlink_preserve_partial_then_success(
             "code": "symlink-refused", "path": format!("bommer:unix-bytes:{}", hex::encode(refused.as_os_str().as_bytes())),
         }])
     );
+
     let bytes = fs::read(report.directory().join("certs.cbom.cdx.json")).unwrap();
     let validated = Validator::new().unwrap().validate(&bytes, false).unwrap();
     assert_eq!(validated.component_count(), 3);
@@ -635,6 +675,7 @@ fn non_utf8_certificate_paths_and_refused_symlink_preserve_partial_then_success(
             hex::encode(certificate.as_os_str().as_bytes())
         )])
     );
+
     assert_eq!(results[1]["status"], "collected");
     assert_eq!(results[1]["target"], "dir:/");
     assert_eq!(
@@ -675,7 +716,9 @@ fn prepared_git_exclusions_are_preserved_by_output_publication() {
     }).to_string()).unwrap();
     let job = &config.jobs()[0];
     let context = CollectionContext::new(Duration::from_secs(10), Arc::new(AtomicBool::new(false)));
+
     let (_, arguments, exclusions, effective_target) = external::prepare(job, &context).unwrap();
+
     let expected = ["manual", "./.git", "./.git/**", "./ignored.txt"];
     assert_eq!(exclusions, expected);
     let argument_exclusions: Vec<_> = arguments
@@ -684,6 +727,7 @@ fn prepared_git_exclusions_are_preserved_by_output_publication() {
         .map(|pair| pair[1].to_str().unwrap())
         .collect();
     assert_eq!(argument_exclusions, expected);
+
     let output = RunOutput::create(&temporary.path().join("output")).unwrap();
     let mut candidate = output.candidate().unwrap();
     candidate.write_all(BOM.as_bytes()).unwrap();
@@ -697,6 +741,7 @@ fn prepared_git_exclusions_are_preserved_by_output_publication() {
     let mut checkpoint = Manifest::new();
     checkpoint.record(result);
     output.checkpoint(&checkpoint).unwrap();
+
     let document = manifest(output.directory());
     let result = &document["results"][0];
     assert_eq!(result["exclude"], json!(expected));

@@ -68,6 +68,7 @@ impl CompiledSchema {
             let value = serde_json::from_str(text)?;
             options = options.with_resource(uri, Resource::from_contents(value)?);
         }
+
         let text = if version == "1.6" {
             RESOURCES[0].1
         } else {
@@ -77,6 +78,7 @@ impl CompiledSchema {
         let validator = options
             .build(&document)
             .map_err(|error| SchemaError::Compile(Box::new(error.to_owned())))?;
+
         Ok(Self {
             validator,
             document,
@@ -108,6 +110,7 @@ impl CompiledSchema {
                 }
                 continue;
             }
+
             if let (Some(object), Some(properties)) = (value.as_object(), schema.get("properties"))
             {
                 for (key, child) in object {
@@ -122,6 +125,7 @@ impl CompiledSchema {
                     pending.push((child, items, format!("{path}/{index}")));
                 }
             }
+
             for keyword in ["allOf", "anyOf", "oneOf"] {
                 if let Some(branches) = schema.get(keyword).and_then(Value::as_array) {
                     for branch in branches {
@@ -130,6 +134,7 @@ impl CompiledSchema {
                 }
             }
         }
+
         components.len()
     }
 }

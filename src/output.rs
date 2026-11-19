@@ -17,6 +17,7 @@ pub(crate) enum OutputError {
     Locked,
     #[error("output I/O failed")]
     Io(#[from] io::Error),
+
     #[error("cannot serialize manifest")]
     Serialize(#[from] serde_json::Error),
     #[error("cannot format timestamp")]
@@ -38,6 +39,7 @@ impl RunOutput {
             .recursive(true)
             .mode(0o700)
             .create(root)?;
+
         // Refuse a leaf symlink instead of locking an attacker-selected file.
         let lock = OpenOptions::new()
             .read(true)
@@ -52,13 +54,16 @@ impl RunOutput {
             Err(rustix::io::Errno::WOULDBLOCK) => return Err(OutputError::Locked),
             Err(error) => return Err(OutputError::Io(error.into())),
         }
+
         let prefix = OffsetDateTime::now_utc().format(time::macros::format_description!(
             "[year][month][day]T[hour][minute][second]Z-"
         ))?;
         let directory = tempfile::Builder::new().prefix(&prefix).tempdir_in(root)?;
         fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))?;
+
         // Keep even an interrupted run for inspection. Individual temporary artifacts are RAII-owned.
         let directory = TempDir::keep(directory);
+
         Ok(Self {
             _lock: lock,
             directory,
@@ -91,11 +96,13 @@ impl RunOutput {
     ) -> Result<PublishedArtifact, OutputError> {
         candidate.flush()?;
         candidate.as_file().sync_all()?;
+
         let name = format!("{}.cdx.json", job.stem());
         let sha256 = hex::encode(Sha256::digest(bytes));
         candidate
             .persist_noclobber(self.directory.join(&name))
             .map_err(|error| error.error)?;
+
         Ok(PublishedArtifact { name, sha256 })
     }
 
@@ -106,10 +113,12 @@ impl RunOutput {
         serde_json::to_writer_pretty(&mut temporary, manifest)?;
         temporary.write_all(b"\n")?;
         temporary.as_file().sync_all()?;
+
         temporary
             .persist(self.directory.join("manifest.json"))
             .map_err(|error| error.error)?;
         File::open(&self.directory)?.sync_all()?;
+
         Ok(())
     }
 }
@@ -171,6 +180,7 @@ impl JobResult {
             } => (exclusions.clone(), *respect_gitignore),
             _ => (vec![], false),
         };
+
         Ok(Self {
             name: job.scope().name().into(),
             kind: job.kind(),
@@ -216,6 +226,7 @@ impl JobResult {
         self.collector_version = outcome.collector_version().map(Into::into);
         self.evidence = outcome.evidence().clone();
         self.observed_scope(&outcome);
+
         self.artifact = Some(artifact.name);
         self.digest = Some(artifact.sha256);
         self.spec_version = Some(spec_version.into());
@@ -225,22 +236,27 @@ impl JobResult {
         self.error = Some(error.to_string());
         self.failure = Some(failure);
     }
+
     pub(crate) fn execution_scope(&mut self, target: &str, exclusions: &[String]) {
         self.target = target.into();
         self.exclude = exclusions.to_vec();
     }
+
     pub(crate) fn observed_scope(&mut self, outcome: &CollectionOutcome) {
         if let Some(exclusions) = outcome.exclusions() {
             self.exclude = exclusions.to_vec();
         }
+
         if let Some(target) = outcome.target() {
             self.target = target.into();
         }
     }
+
     pub(crate) fn finish(&mut self) -> Result<(), OutputError> {
         self.finished = timestamp()?;
         Ok(())
     }
+
     pub(crate) fn is_unsuccessful(&self) -> bool {
         matches!(self.status, Status::Failed | Status::Partial)
     }
@@ -264,9 +280,11 @@ impl Manifest {
             results: vec![],
         }
     }
+
     pub(crate) fn record(&mut self, result: JobResult) {
         self.results.push(result);
     }
+
     pub(crate) fn is_unsuccessful(&self) -> bool {
         self.results.iter().any(JobResult::is_unsuccessful)
     }

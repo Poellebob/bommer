@@ -37,6 +37,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Value, DecodeError> {
     let mut parser = Parser { bytes, position: 0 };
     let mut frames: Vec<Frame> = Vec::new();
     let mut document = None;
+
     loop {
         parser.whitespace();
         let next = parser.bytes.get(parser.position).copied();
@@ -103,6 +104,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Value, DecodeError> {
                 Err(DecodeError::MultipleDocuments)
             };
         }
+
         // The root has depth zero, matching the Go decoder's value-depth limit.
         if frames.len() > MAX_DEPTH {
             return Err(DecodeError::DepthExceeded { limit: MAX_DEPTH });
@@ -137,6 +139,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Value, DecodeError> {
                     }
                     parser.position += 1;
                 }
+
                 let value = serde_json::from_slice(&bytes[start..parser.position])
                     .map_err(|_| parser.invalid())?;
                 attach(value, &mut frames, &mut document);
@@ -192,6 +195,7 @@ impl Parser<'_> {
     fn string(&mut self) -> Result<String, DecodeError> {
         let start = self.position;
         self.position += 1;
+
         while let Some(&byte) = self.bytes.get(self.position) {
             self.position += 1;
             match byte {
@@ -207,6 +211,7 @@ impl Parser<'_> {
                 _ => {}
             }
         }
+
         Err(self.invalid())
     }
 }

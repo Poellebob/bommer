@@ -87,12 +87,15 @@ fn collector_arguments_match_backend_contracts() {
             "registry:example/app:v1",
         ),
     ];
+
     for (scope, target, backend, kind, expected, expected_exclusions, expected_target) in cases {
         let job = Job::new(scope, None, kind, target, backend).unwrap();
         let context =
             CollectionContext::new(Duration::from_secs(5), Arc::new(AtomicBool::new(false)));
+
         let (executable, arguments, exclusions, target) =
             external::prepare(&job, &context).unwrap();
+
         assert_eq!(exclusions, expected_exclusions);
         assert_eq!(target, expected_target);
         let actual: Vec<OsString> = std::iter::once(executable).chain(arguments).collect();
@@ -128,11 +131,14 @@ fn command_substitutes_only_argument_tokens_without_shell_expansion() {
         Backend::Command(spec),
     )
     .unwrap();
+
     for _ in 0..2 {
         let context =
             CollectionContext::new(Duration::from_secs(5), Arc::new(AtomicBool::new(false)));
+
         let (executable, arguments, exclusions, target) =
             external::prepare(&job, &context).unwrap();
+
         assert!(exclusions.is_empty());
         assert_eq!(target, "/source tree; $(touch bad)");
         assert_eq!(executable, "scanner-{target}");
@@ -177,8 +183,10 @@ fn host_command_target_depends_on_inventory_kind() {
         .unwrap();
         let context =
             CollectionContext::new(Duration::from_secs(5), Arc::new(AtomicBool::new(false)));
+
         let (executable, arguments, exclusions, target) =
             external::prepare(&job, &context).unwrap();
+
         assert!(exclusions.is_empty());
         assert_eq!(target, expected_target);
         assert_eq!(executable, "scanner-{target}");
@@ -213,11 +221,16 @@ fn doctor_checks_files_without_executing_collector() {
         ),
     )
     .unwrap();
+
     external::check(&job).unwrap();
+
     assert!(!marker.exists());
+
     let context = CollectionContext::new(Duration::from_secs(5), Arc::new(AtomicBool::new(false)));
     let (mut output, mut stderr) = (Vec::new(), Vec::new());
+
     let result = external::collect(&job, &context, &mut output, &mut stderr).unwrap();
+
     assert_eq!(output, b"bom");
     assert_eq!(stderr, b"log");
     assert_eq!(std::fs::read(marker).unwrap(), b"executed");
@@ -238,6 +251,7 @@ fn doctor_rejects_a_file_as_directory_target() {
         Backend::Command(CommandSpec::new("/bin/sh".into(), vec![]).unwrap()),
     )
     .unwrap();
+
     assert!(matches!(
         external::check(&job),
         Err(ExternalError::NotDirectory { .. })
@@ -282,6 +296,7 @@ fn git_ignores_preserve_negations_tracked_files_and_escape_globs() {
             .unwrap()
             .success()
     );
+
     for (target, expected) in [
         (
             root.to_path_buf(),
@@ -317,7 +332,9 @@ fn git_ignores_preserve_negations_tracked_files_and_escape_globs() {
         .unwrap();
         let context =
             CollectionContext::new(Duration::from_secs(5), Arc::new(AtomicBool::new(false)));
+
         let (_, arguments, exclusions, target) = external::prepare(&job, &context).unwrap();
+
         assert_eq!(exclusions, expected);
         assert_eq!(target, expected_target);
         let actual: Vec<_> = arguments
@@ -329,6 +346,7 @@ fn git_ignores_preserve_negations_tracked_files_and_escape_globs() {
             actual,
             expected.into_iter().map(OsString::from).collect::<Vec<_>>()
         );
+
         let Backend::Syft { exclusions, .. } = job.backend() else {
             unreachable!()
         };

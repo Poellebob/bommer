@@ -1,72 +1,83 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use crate::cli::{CliError, Only, Request};
+use clap::Parser;
 
-#[test]
-fn cli_defaults_and_explicit_selectors() {
-    for (command, doctor) in [("scan", false), ("doctor", true)] {
-        let actual = Request::parse([OsString::from(command)]).unwrap();
-        let expected = if doctor {
-            Request::Doctor {
-                config: PathBuf::from("/etc/bommer/config.yaml"),
-                only: None,
-                application: None,
-            }
-        } else {
-            Request::Scan {
-                config: PathBuf::from("/etc/bommer/config.yaml"),
-                only: None,
-                application: None,
-            }
-        };
-        assert_eq!(actual, expected);
-    }
-    assert_eq!(
-        Request::parse(
-            [
-                "scan",
-                "--config",
-                "local.yaml",
-                "--only",
-                "cbom",
-                "--application",
-                "api"
-            ]
-            .map(OsString::from)
-        )
-        .unwrap(),
-        Request::Scan {
-            config: "local.yaml".into(),
-            only: Some(Only::Cbom),
-            application: Some("api".into())
-        }
-    );
-    assert_eq!(
-        Request::parse(["doctor", "--only=sbom", "--config=other.yaml"].map(OsString::from))
-            .unwrap(),
-        Request::Doctor {
-            config: "other.yaml".into(),
-            only: Some(Only::Sbom),
-            application: None
-        }
-    );
-    assert!(matches!(
-        Request::parse(["scan", "--only", "hbom"].map(OsString::from)),
-        Ok(Request::Scan {
-            only: Some(Only::Hbom),
-            ..
-        })
-    ));
+use crate::{Args, Command, InventoryFilter};
+
+fn parse(input: &[&str]) -> Result<Args, clap::Error> {
+    Args::try_parse_from(
+        std::iter::once(OsString::from("bommer")).chain(input.iter().map(OsString::from)),
+    )
 }
 
 #[test]
-fn help_and_version_are_successful_requests() {
+fn cli_defaults_and_explicit_selectors() {
+    for (command, expect_doctor) in [("scan", false), ("doctor", true)] {
+        let args = parse(&[command]).unwrap();
+
+        match &args.command {
+            Command::Scan(options) if !expect_doctor => {
+                assert_eq!(options.config, PathBuf::from("/etc/bommer/config.yaml"));
+                assert_eq!(options.only, None);
+                assert_eq!(options.application, None);
+            }
+            Command::Doctor(options) if expect_doctor => {
+                assert_eq!(options.config, PathBuf::from("/etc/bommer/config.yaml"));
+                assert_eq!(options.only, None);
+                assert_eq!(options.application, None);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    let args = parse(&[
+        "scan",
+        "--config",
+        "local.yaml",
+        "--only",
+        "cbom",
+        "--application",
+        "api",
+    ])
+    .unwrap();
+
+    match &args.command {
+        Command::Scan(options) => {
+            assert_eq!(options.config, PathBuf::from("local.yaml"));
+            assert_eq!(options.only, Some(InventoryFilter::Cbom));
+            assert_eq!(options.application.as_deref(), Some("api"));
+        }
+        other => panic!("unexpected command: {other:?}"),
+    }
+
+    let args = parse(&["doctor", "--only=sbom", "--config=other.yaml"]).unwrap();
+
+    match &args.command {
+        Command::Doctor(options) => {
+            assert_eq!(options.config, PathBuf::from("other.yaml"));
+            assert_eq!(options.only, Some(InventoryFilter::Sbom));
+            assert_eq!(options.application, None);
+        }
+        other => panic!("unexpected command: {other:?}"),
+    }
+
+    let args = parse(&["scan", "--only", "hbom"]).unwrap();
+
+    match &args.command {
+        Command::Scan(options) => {
+            assert_eq!(options.only, Some(InventoryFilter::Hbom));
+        }
+        other => panic!("unexpected command: {other:?}"),
+    }
+}
+
+#[test]
+fn help_and_version_are_typed_clap_errors() {
     for input in [
-        vec![],
-        vec!["help"],
         vec!["--help"],
         vec!["-h"],
+        vec!["help"],
         vec!["scan", "--help"],
         vec!["doctor", "-h"],
         vec!["help", "scan"],
@@ -74,17 +85,19 @@ fn help_and_version_are_successful_requests() {
         vec!["version", "--help"],
         vec!["help", "version"],
     ] {
-        assert_eq!(
-            Request::parse(input.into_iter().map(OsString::from)).unwrap(),
-            Request::Help
-        );
+        let error = parse(&input).unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
     }
-    for input in [vec!["version"], vec!["--version"]] {
-        assert_eq!(
-            Request::parse(input.into_iter().map(OsString::from)).unwrap(),
-            Request::Version
-        );
-    }
+
+    let error = parse(&["--version"]).unwrap_err();
+    assert_eq!(error.kind(), clap::error::ErrorKind::DisplayVersion);
+
+    assert!(matches!(
+        parse(&["version"]).unwrap(),
+        Args {
+            command: Command::Version
+        }
+    ));
 }
 
 #[test]
@@ -100,8 +113,7 @@ fn invalid_arguments_are_typed_usage_errors() {
         vec!["help", "scan", "extra"],
         vec!["--config", "local.yaml", "scan"],
     ] {
-        let error = Request::parse(input.into_iter().map(OsString::from)).unwrap_err();
-        assert!(matches!(error, CliError::Arguments(_)));
+        let error = parse(&input).unwrap_err();
         assert_eq!(error.exit_code(), 2);
     }
 }
@@ -110,12 +122,19 @@ fn invalid_arguments_are_typed_usage_errors() {
 #[test]
 fn config_paths_preserve_non_unicode_bytes() {
     use std::os::unix::ffi::OsStringExt;
+
     let path = OsString::from_vec(vec![b'/', b't', b'm', b'p', b'/', 0xff]);
-    let request = Request::parse([
+
+    let args = Args::try_parse_from([
+        OsString::from("bommer"),
         OsString::from("scan"),
         OsString::from("--config"),
         path.clone(),
     ])
     .unwrap();
-    assert!(matches!(request, Request::Scan { config, .. } if config == path));
+
+    match args.command {
+        Command::Scan(options) => assert_eq!(options.config, path),
+        other => panic!("unexpected command: {other:?}"),
+    }
 }

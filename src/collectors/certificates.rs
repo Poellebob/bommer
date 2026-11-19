@@ -43,6 +43,7 @@ fn open_path(path: &Path) -> io::Result<File> {
     if !path.is_absolute() {
         return Err(io::Error::from(io::ErrorKind::InvalidInput));
     }
+
     // Split raw bytes: Path::components would normalize '.' before no-follow checks.
     let parts: Vec<_> = path
         .as_os_str()
@@ -67,6 +68,7 @@ fn open_path(path: &Path) -> io::Result<File> {
             Mode::empty(),
         )?);
     }
+
     Ok(file)
 }
 
@@ -97,6 +99,7 @@ fn configured_paths(job: &Job, target: Option<&Path>) -> Result<Vec<PathBuf>, Ce
     if paths.is_empty() || *max_file_bytes == 0 || *max_file_bytes > 64 << 20 {
         return Err(CertificateError::Options);
     }
+
     paths
         .iter()
         .map(|path| {
@@ -118,6 +121,7 @@ fn resolve_target(job: &Job) -> Result<Option<PathBuf>, CertificateError> {
                 if path.components().any(|part| part == Component::ParentDir) {
                     return Err(CertificateError::InvalidTarget { path: path.clone() });
                 }
+
                 // Make relative targets absolute without resolving any directory symlinks.
                 let absolute = if path.is_absolute() {
                     path.clone()
@@ -220,6 +224,7 @@ impl Scan<'_> {
         if !self.visited.insert(path.to_path_buf()) {
             return Ok(());
         }
+
         let metadata = match file.metadata() {
             Ok(metadata) => metadata,
             Err(_) => {
@@ -262,8 +267,10 @@ impl Scan<'_> {
                     }
                 }
             }
+
             return Ok(());
         }
+
         if !metadata.is_file() {
             self.diagnostic(DiagnosticCode::UnsupportedFile, path);
             return Ok(());
@@ -289,6 +296,7 @@ impl Scan<'_> {
             }
             return Ok(());
         }
+
         let mut data = Vec::new();
         let mut buffer = [0; 64 << 10];
         let mut reader = (&mut file).take(self.max_file_bytes + 1);
@@ -309,6 +317,7 @@ impl Scan<'_> {
             }
             return Ok(());
         }
+
         let begin = b"-----BEGIN ";
         if data.windows(begin.len()).any(|window| window == begin) {
             let mut remaining = data.as_slice();
@@ -329,6 +338,7 @@ impl Scan<'_> {
                 {
                     continue;
                 }
+
                 // Never decode non-certificate PEM blocks, including malformed private keys.
                 let decoded = block
                     .strip_prefix(b"-----BEGIN CERTIFICATE-----")
@@ -355,6 +365,7 @@ impl Scan<'_> {
         } else if candidate || data.first() == Some(&0x30) {
             self.record(&data, path, candidate);
         }
+
         Ok(())
     }
 }
@@ -405,6 +416,7 @@ fn signature_name(identifier: &AlgorithmIdentifier<'_>) -> &'static str {
             {
                 return "0";
             }
+
             match (
                 parameters.hash_algorithm_oid().to_id_string().as_str(),
                 parameters.salt_length(),
@@ -448,6 +460,7 @@ pub(crate) fn collect_with_limits(
     else {
         return Err(CertificateError::Options);
     };
+
     let mut scan = Scan {
         context,
         max_file_bytes: *max_file_bytes,
@@ -475,6 +488,7 @@ pub(crate) fn collect_with_limits(
             }
         }
     }
+
     let mut components = BTreeMap::new();
     let mut algorithms = BTreeMap::new();
     let mut sources = BTreeMap::new();
@@ -482,6 +496,7 @@ pub(crate) fn collect_with_limits(
         context.check()?;
         let (_, certificate) =
             parse_x509_certificate(&observation.der).map_err(|_| CertificateError::Options)?;
+
         let key = certificate.public_key();
         let mut key_properties = json!({"primitive":"unknown"});
         let key_name = match key.parsed() {
@@ -528,11 +543,13 @@ pub(crate) fn collect_with_limits(
             signature_name(&certificate.signature_algorithm),
             json!({"primitive":"signature"}),
         );
+
         let mut certificate_properties = json!({"certificateFormat":"X.509","notValidBefore":certificate.validity().not_before.to_datetime().format(&Rfc3339).map_err(|_| CertificateError::Options)?,"notValidAfter":certificate.validity().not_after.to_datetime().format(&Rfc3339).map_err(|_| CertificateError::Options)?,"signatureAlgorithmRef":signature_reference});
         if *include_identity {
             certificate_properties["subjectName"] = certificate.subject().to_string().into();
             certificate_properties["issuerName"] = certificate.issuer().to_string().into();
         }
+
         let reference = format!("certificate:sha256:{digest}");
         let mut properties = vec![
             json!({"name":"bommer:certificate:sha256","value":digest}),
@@ -552,8 +569,10 @@ pub(crate) fn collect_with_limits(
         components.insert(reference.clone(), json!({"type":"cryptographic-asset","bom-ref":reference,"name":format!("X.509 SHA-256 {digest}"),"cryptoProperties":{"assetType":"certificate","certificateProperties":certificate_properties},"properties":properties}));
     }
     components.extend(algorithms);
+
     context.check()?;
     Document::new(components.into_values().collect(), vec![], vec![]).write(output)?;
+
     Ok(CollectionOutcome::observed(
         scan.observations.len(),
         Coverage::DeclaredScope,

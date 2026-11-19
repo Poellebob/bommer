@@ -9,7 +9,7 @@ pub(crate) struct Document {
 
 impl Document {
     /// Construct a native 1.6 inventory. Callers supply schema-valid records;
-    /// the runner validates the complete serialized document before publication.
+    /// the scan validates the complete serialized document before publication.
     pub(crate) fn new(
         components: Vec<Value>,
         dependencies: Vec<Value>,

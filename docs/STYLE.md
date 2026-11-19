@@ -3,7 +3,7 @@
 ## Architecture
 
 Bommer is one Cargo package with one binary. Keep the dependency graph in
-the dependency graph in `docs/IMPLEMENTATION.md` acyclic. A module never depends on its parent or any ancestor,
+`docs/IMPLEMENTATION.md` acyclic. A module never depends on its parent or any ancestor,
 including through qualified paths, aliases, callbacks, or shared types. Parents
 compose children. Children return results instead of calling their coordinator.
 Tests belong in independent sibling modules, not nested modules importing a parent.
@@ -22,7 +22,7 @@ Use structs, enums, and `impl` blocks to expose small operations with private da
 Constructors enforce invariants; do not expose mutable fields that bypass them.
 Use enums for finite states and error categories. Prefer operations to getters when
 the operation hides a meaningful implementation detail. Do not obscure orchestration:
-the runner should read as collection, validation, publication, and recording.
+scan execution should read as collection, validation, publication, and recording.
 
 Keep errors typed across boundaries, preserving useful structured context and source
 errors. User-facing formatting is presentation, not an interface to test against.
@@ -41,6 +41,14 @@ Use ordinary synchronous functions unless concurrency solves an observed need.
 Keep functions together until extraction makes ownership or reuse clearer. Avoid
 compatibility layers except for actual configuration, persisted artifacts, and CLI
 contracts. Do not add fallback collectors that silently change inventory coverage.
+
+## Layout
+
+Whitespace communicates intent. Keep related statements together and use blank
+lines to separate logical phases, independent operations, and neighboring methods.
+In tests, distinguish setup, execution, and assertions without section comments.
+Do not mechanically separate every statement or extract helpers just to shorten
+a function. Keep structs and enums above implementations and functions.
 
 ## Resource Safety
 

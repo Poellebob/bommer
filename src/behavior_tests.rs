@@ -8,9 +8,11 @@ fn inventory_names_cannot_escape_the_artifact_namespace() {
         ("a/b", Err(NameError::InvalidCharacters)),
         ("-host", Err(NameError::InvalidCharacters)),
     ];
+
     for (input, expected) in cases {
         assert_eq!(Name::new(input.into()), expected);
     }
+
     let input = "application_2-prod";
     assert_eq!(
         Name::new(input.into()).unwrap().as_str(),
@@ -22,7 +24,9 @@ fn inventory_names_cannot_escape_the_artifact_namespace() {
 fn command_construction_preserves_literal_arguments() {
     let executable = std::ffi::OsString::from("scanner");
     let arguments = vec!["a b".into(), "$(touch unexpected)".into(), "*.json".into()];
+
     let command = CommandSpec::new(executable, arguments).unwrap();
+
     assert_eq!(command.executable(), "scanner");
     assert_eq!(
         command.arguments(),
@@ -34,6 +38,7 @@ fn command_construction_preserves_literal_arguments() {
 fn commands_require_an_executable() {
     let executable = std::ffi::OsString::new();
     let arguments = vec!["scan".into()];
+
     assert!(matches!(
         CommandSpec::new(executable, arguments),
         Err(CommandError::EmptyExecutable)

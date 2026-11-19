@@ -7,10 +7,12 @@ let
 in {
   options.services.bommer = {
     enable = lib.mkEnableOption "Bommer collection service";
+
     package = lib.mkOption {
       type = lib.types.package;
       default = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
     };
+
     settings = lib.mkOption {
       type = yaml.type;
       default = {
@@ -19,11 +21,13 @@ in {
       };
       description = "Bommer configuration. Explicitly enable collectors; do not put secrets here (stored in the Nix store).";
     };
+
     extraPackages = lib.mkOption {
       type = lib.types.listOf lib.types.package;
       default = [ ];
       description = "External collectors and host utilities available to the service.";
     };
+
     schedule = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
@@ -48,6 +52,7 @@ in {
         ExecStart = "${lib.getExe cfg.package} scan --config ${configuration}";
       };
     };
+
     systemd.timers.bommer = lib.mkIf (cfg.schedule != null) {
       wantedBy = [ "timers.target" ];
       timerConfig = {

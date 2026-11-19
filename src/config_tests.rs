@@ -10,9 +10,11 @@ const BASE: &str = "version: 1\noutput: {directory: /tmp/inventories}\n";
 #[test]
 fn configuration_defaults_and_explicit_duration() {
     let config = Config::parse(BASE).unwrap();
+
     assert_eq!(config.output_directory(), Path::new("/tmp/inventories"));
     assert_eq!(config.timeout(), Duration::from_secs(600));
     assert!(config.jobs().is_empty());
+
     for (input, nanos) in [
         ("1h2m3.004005006s", 3_723_004_005_006),
         ("+.5s", 500_000_000),
@@ -25,6 +27,7 @@ fn configuration_defaults_and_explicit_duration() {
         let config = Config::parse(&format!("{BASE}timeout: '{input}'\n")).unwrap();
         assert_eq!(config.timeout(), Duration::from_nanos(nanos), "{input}");
     }
+
     for input in [
         "0",
         "0s",
@@ -69,6 +72,7 @@ fn strict_yaml_rejects_unknown_duplicate_and_extra_documents() {
             "{text:?}"
         );
     }
+
     for text in ["", "# only a comment\n", "---\n"] {
         assert!(matches!(
             Config::parse(text),
@@ -87,11 +91,13 @@ fn required_fields_and_io_errors_are_typed() {
         Config::parse("version: 1\n"),
         Err(ConfigError::MissingOutputDirectory)
     ));
+
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("config.yaml");
     assert!(
         matches!(Config::load(&path), Err(ConfigError::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound)
     );
+
     std::fs::write(&path, BASE).unwrap();
     assert_eq!(
         Config::load(&path).unwrap().output_directory(),
@@ -102,6 +108,7 @@ fn required_fields_and_io_errors_are_typed() {
 #[test]
 fn null_fields_have_go_zero_value_behavior() {
     let config = Config::parse(&format!("{BASE}timeout: null\nhost: {{hbom: null, sbom: {{enabled: null, command: null}}, inventories: null}}\napplications: null\n")).unwrap();
+
     assert_eq!(config.timeout(), Duration::from_secs(600));
     assert!(config.jobs().is_empty());
 }
@@ -112,22 +119,26 @@ fn names_and_targets_are_validated_even_without_enabled_collectors() {
         let text = format!(
             "{BASE}applications: [{{name: '{name}', target: {{type: directory, path: /app}}}}]\n"
         );
+
         assert!(matches!(
             Config::parse(&text),
             Err(ConfigError::InvalidName { .. })
         ));
     }
+
     for names in ["host", "api, api"] {
         let apps = names
             .split(", ")
             .map(|name| format!("{{name: {name}, target: {{type: directory, path: /app}}}}"))
             .collect::<Vec<_>>()
             .join(", ");
+
         assert!(matches!(
             Config::parse(&format!("{BASE}applications: [{apps}]\n")),
             Err(ConfigError::DuplicateName { .. })
         ));
     }
+
     for target in [
         "{}",
         "{type: directory}",
@@ -144,6 +155,7 @@ fn names_and_targets_are_validated_even_without_enabled_collectors() {
             Err(ConfigError::InvalidTarget { .. })
         ));
     }
+
     assert!(matches!(
         Config::parse(&format!(
             "{BASE}host: {{inventories: [{{name: certs, kind: unknown}}]}}\n"
@@ -161,6 +173,7 @@ fn names_and_targets_are_validated_even_without_enabled_collectors() {
 #[test]
 fn disabled_collectors_preserve_go_validation_behavior() {
     let config = Config::parse(&format!("{BASE}host:\n  inventories:\n    - name: off\n      kind: cbom\n      collector:\n        backend: unknown\n        certificates: {{paths: [''], max_file_bytes: -1}}\n        nix: {{roots: [relative]}}\n        import: {{path: ''}}\n")).unwrap();
+
     assert!(config.jobs().is_empty());
 }
 
@@ -190,6 +203,7 @@ fn enabled_collectors_reject_mismatched_and_unused_options() {
             "{options}"
         );
     }
+
     assert!(matches!(
         Config::parse(&format!(
             "{BASE}host: {{sbom: {{enabled: true, backend: syft, nix: {{}}}}}}\n"
@@ -296,12 +310,15 @@ fn native_backend_options_and_scope_contracts() {
         let text = format!(
             "{BASE}applications: [{{name: api, target: {{type: {target}, {location}}}, inventories: [{{name: test, kind: {kind}, collector: {{enabled: true, {options}}}}}]}}]\n"
         );
+
         let result = Config::parse(&text);
+
         assert_eq!(result.is_ok(), valid, "{text}: {result:?}");
         if !valid {
             assert!(matches!(result, Err(ConfigError::InvalidCollector { .. })));
         }
     }
+
     for (options, valid) in [
         ("backend: nix", false),
         ("backend: nix, nix: {roots: [/nix/store/root]}", true),
@@ -315,9 +332,11 @@ fn native_backend_options_and_scope_contracts() {
             valid
         );
     }
+
     let result = Config::parse(&format!(
         "{BASE}host: {{inventories: [{{name: certs, kind: cbom, collector: {{enabled: true, backend: certificates, certificates: {{paths: [relative]}}}}}}]}}\n"
     ));
+
     assert!(matches!(
         result,
         Err(ConfigError::InvalidCollector {
@@ -339,7 +358,9 @@ fn certificates_normalize_default_and_enforce_limits() {
         let text = format!(
             "{BASE}host: {{inventories: [{{name: certs, kind: cbom, collector: {{enabled: true, backend: certificates, certificates: {{paths: [/etc/ssl], max_file_bytes: {limit}}}}}}}]}}\n"
         );
+
         let result = Config::parse(&text);
+
         match expected {
             Some(expected) => {
                 let config = result.unwrap();
@@ -351,6 +372,7 @@ fn certificates_normalize_default_and_enforce_limits() {
                 else {
                     panic!("expected certificates");
                 };
+
                 assert_eq!(*max_file_bytes, expected);
                 assert!(!include_identity);
             }
@@ -393,18 +415,22 @@ fn planning_preserves_order_metadata_and_selection() {
     ] {
         let selection = Selection::new(kind, app.map(|name| Name::new(name.into()).unwrap()));
         let plan = Plan::build(&config, &selection).unwrap();
+
         assert_eq!(
             plan.jobs().iter().map(|job| job.stem()).collect::<Vec<_>>(),
             expected
         );
     }
+
     let job = &config.jobs()[3];
     assert_eq!(job.scope().version(), Some("2.3"));
     assert!(matches!(job.target(), Target::RegistryImage(image) if image == "example/api:2"));
     assert!(matches!(config.jobs()[1].target(), Target::Host));
+
     let Backend::Command(spec) = config.jobs()[4].backend() else {
         panic!("expected command");
     };
+
     assert_eq!(spec.executable(), "scanner");
     assert_eq!(spec.arguments(), &[std::ffi::OsString::from("{target}")]);
 }
@@ -415,6 +441,7 @@ fn disabled_application_is_known_but_has_empty_selection() {
         "{BASE}applications: [{{name: off, target: {{type: directory, path: /app}}}}]\n"
     ))
     .unwrap();
+
     assert_eq!(
         config
             .applications()
@@ -423,16 +450,19 @@ fn disabled_application_is_known_but_has_empty_selection() {
             .collect::<Vec<_>>(),
         ["off"]
     );
+
     for application in [None, Some("off")] {
         let selection = Selection::new(
             None,
             application.map(|name| Name::new(name.into()).unwrap()),
         );
+
         assert!(matches!(
             Plan::build(&config, &selection),
             Err(PlanError::EmptySelection)
         ));
     }
+
     let selection = Selection::new(None, Some(Name::new("missing".into()).unwrap()));
     assert!(
         matches!(Plan::build(&config, &selection), Err(PlanError::UnknownApplication { name }) if name.as_str() == "missing")

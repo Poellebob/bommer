@@ -26,7 +26,7 @@ Lock files pin the development environment and flake inputs; production external
 collector version pinning remains to be implemented.
 
 `just schema-test` exercises embedded official schemas, strict decoding, and
-offline resolution. `just integration-test` runs collector, process, runner,
+offline resolution. `just integration-test` runs collector, process, scan,
 import, and CLI fixtures. Native Nix tests use fake tools and metadata; they do
 not select a host closure or perform live queries. `BOMMER_TEST_NIX_ROOT` gates
 only the retained Go reference test, not Rust tests. Live checks must be explicitly

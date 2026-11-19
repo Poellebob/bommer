@@ -53,6 +53,7 @@ pub(crate) fn check(job: &Job) -> Result<(), ExternalError> {
         _ => return Err(ExternalError::UnsupportedTarget),
     };
     Process::find_executable(executable)?;
+
     if !job.scope().is_host()
         && let Target::Directory(path) = job.target()
     {
@@ -64,6 +65,7 @@ pub(crate) fn check(job: &Job) -> Result<(), ExternalError> {
             return Err(ExternalError::NotDirectory { path: path.clone() });
         }
     }
+
     Ok(())
 }
 
@@ -75,6 +77,7 @@ pub(crate) fn collect(
 ) -> Result<CollectionOutcome, ExternalError> {
     check(job)?;
     let prepared = prepare_command(job, context)?;
+
     Process::stream(
         &prepared.executable,
         &prepared.arguments,
@@ -88,6 +91,7 @@ pub(crate) fn collect(
         exclusions: prepared.exclusions.clone(),
         target: prepared.target.clone(),
     })?;
+
     Ok(CollectionOutcome::external()
         .with_exclusions(prepared.exclusions)
         .with_target(prepared.target))
@@ -121,6 +125,7 @@ fn prepare_command(job: &Job, context: &CollectionContext) -> Result<Prepared, E
         target => OsString::from(target.display()),
     };
     let (executable, mut arguments) = command(job, &target)?;
+
     let mut patterns: Vec<OsString> = match job.backend() {
         Backend::Syft { exclusions, .. } => exclusions.iter().map(OsString::from).collect(),
         _ => Vec::new(),
@@ -151,6 +156,7 @@ fn prepare_command(job: &Job, context: &CollectionContext) -> Result<Prepared, E
             64 << 20,
             1 << 20,
         )?;
+
         patterns.extend([OsString::from("./.git"), OsString::from("./.git/**")]);
         for path in ignored
             .stdout()
@@ -176,6 +182,7 @@ fn prepare_command(job: &Job, context: &CollectionContext) -> Result<Prepared, E
             patterns.push(OsString::from_vec(pattern));
         }
     }
+
     let mut exclusions = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for pattern in patterns {
@@ -184,6 +191,7 @@ fn prepare_command(job: &Job, context: &CollectionContext) -> Result<Prepared, E
             arguments.extend([OsString::from("--exclude"), pattern]);
         }
     }
+
     Ok(Prepared {
         executable,
         arguments,
@@ -216,6 +224,7 @@ fn command(
                     arguments.extend(["--source-version".into(), version.into()]);
                 }
             }
+
             Ok(("syft".into(), arguments))
         }
         Backend::Command(spec) => {

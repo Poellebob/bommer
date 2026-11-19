@@ -11,6 +11,7 @@ use crate::json::{DecodeError, decode};
 
 fn validator() -> &'static Validator {
     static VALIDATOR: OnceLock<Validator> = OnceLock::new();
+
     VALIDATOR.get_or_init(|| Validator::new().expect("embedded schemas compile offline"))
 }
 
@@ -29,6 +30,7 @@ fn accepts_both_versions_and_counts_components() {
         ),
     ] {
         let summary = validator().validate(input.as_bytes(), true).unwrap();
+
         assert_eq!(summary.spec_version(), version);
         assert_eq!(summary.component_count(), count);
     }
@@ -51,6 +53,7 @@ fn duplicate_keys_are_typed_and_escape_aware() {
             matches!(validator().validate(input.as_bytes(), false), Err(ValidationError::Decode(DecodeError::DuplicateKey { key })) if key == "name")
         );
     }
+
     assert_eq!(
         decode(br#"{"a":1,"b":{"a":2},"c":{"a":3}}"#).unwrap(),
         json!({"a":1,"b":{"a":2},"c":{"a":3}})
@@ -65,6 +68,7 @@ fn rejects_trailing_documents_and_malformed_json() {
             Err(DecodeError::MultipleDocuments)
         );
     }
+
     for input in [
         "",
         "{",
@@ -90,10 +94,12 @@ fn rejects_trailing_documents_and_malformed_json() {
             "{input:?}"
         );
     }
+
     assert!(matches!(
         decode(b"\"\xff\""),
         Err(DecodeError::InvalidJson { .. })
     ));
+
     assert_eq!(
         decode(b" \n [true, false, null, -1.5e2, \"a\\\"b\"]\t").unwrap(),
         json!([true, false, null, -150.0, "a\"b"])
@@ -104,11 +110,13 @@ fn rejects_trailing_documents_and_malformed_json() {
 fn depth_limit_is_explicit_and_exceeds_serde_default() {
     let accepted = format!("{}0{}", "[".repeat(512), "]".repeat(512));
     assert!(decode(accepted.as_bytes()).is_ok());
+
     let rejected = format!("{}0{}", "[".repeat(513), "]".repeat(513));
     assert_eq!(
         decode(rejected.as_bytes()),
         Err(DecodeError::DepthExceeded { limit: 512 })
     );
+
     let rejected = format!("{}{}", "[".repeat(514), "]".repeat(514));
     assert_eq!(
         decode(rejected.as_bytes()),
@@ -125,7 +133,9 @@ fn validates_schema_defined_component_nesting_beyond_128_json_levels() {
             r#"{"type":"cryptographic-asset","name":"leaf"}"#,
             "]}".repeat(70),
         );
+
         let summary = validator().validate(input.as_bytes(), true).unwrap();
+
         assert_eq!(summary.spec_version(), spec);
         assert_eq!(summary.component_count(), 71);
     }
@@ -164,6 +174,7 @@ fn native_empty_inventories_are_allowed_but_external_ones_are_not() {
                 .unwrap()
                 .extend(extra.as_object().unwrap().clone());
             let bytes = serde_json::to_vec(&input).unwrap();
+
             assert_eq!(
                 validator()
                     .validate(&bytes, false)
@@ -176,17 +187,21 @@ fn native_empty_inventories_are_allowed_but_external_ones_are_not() {
                 Err(ValidationError::EmptyExternalInventory)
             ));
         }
+
         let missing = json!({"bomFormat":"CycloneDX","specVersion":spec,"components":[{"type":"library","name":"x"}]});
         let bytes = serde_json::to_vec(&missing).unwrap();
+
         assert!(validator().validate(&bytes, false).is_ok());
         assert!(matches!(
             validator().validate(&bytes, true),
             Err(ValidationError::MissingDocumentVersion)
         ));
+
         for version in [json!(0), json!(-1), json!(1.5), json!("1"), json!(null)] {
             let mut input = missing.clone();
             input["version"] = version;
             let bytes = serde_json::to_vec(&input).unwrap();
+
             for external in [false, true] {
                 assert!(matches!(
                     validator().validate(&bytes, external),
@@ -208,11 +223,14 @@ fn external_inventory_requires_top_level_components_even_with_nested_inventory()
                     "components":[{"type":"library","name":"nested"}]
                 }}
             });
+
             if let Some(components) = components {
                 input["components"] = components;
             }
+
             let bytes = serde_json::to_vec(&input).unwrap();
             let summary = validator().validate(&bytes, false).unwrap();
+
             assert_eq!(summary.spec_version(), spec);
             assert_eq!(summary.component_count(), 1);
             assert!(matches!(
@@ -245,15 +263,19 @@ fn enforces_full_embedded_schemas_including_external_definitions_and_formats() {
                 .as_object_mut()
                 .unwrap()
                 .extend(invalid.as_object().unwrap().clone());
+
             let result = validator().validate(&serde_json::to_vec(&input).unwrap(), false);
+
             assert!(
                 matches!(result, Err(ValidationError::SchemaViolation { instance_path, schema_path, .. }) if !schema_path.is_empty() && (instance_path.is_empty() || instance_path.starts_with('/'))),
                 "{input}"
             );
         }
     }
+
     for field in ["algorithmFamily", "ellipticCurve"] {
         let input = json!({"bomFormat":"CycloneDX","specVersion":"1.7","components":[{"type":"cryptographic-asset","name":"x","cryptoProperties":{"assetType":"algorithm","algorithmProperties":{field:"invalid"}}}]});
+
         assert!(matches!(
             validator().validate(&serde_json::to_vec(&input).unwrap(), false),
             Err(ValidationError::SchemaViolation { .. })
@@ -265,6 +287,7 @@ fn enforces_full_embedded_schemas_including_external_definitions_and_formats() {
 fn schema_selection_ignores_instance_schema_and_never_contacts_listener() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
+
     for uri in [
         format!("http://{}/evil.json", listener.local_addr().unwrap()),
         "https://attacker.invalid/schema.json".to_owned(),
@@ -278,8 +301,10 @@ fn schema_selection_ignores_instance_schema_and_never_contacts_listener() {
                     .validate(&serde_json::to_vec(&input).unwrap(), false)
                     .is_ok()
             );
+
             let input = json!({"$schema":uri,"bomFormat":"CycloneDX","specVersion":spec,"components":[{"type":"cryptographic-asset","name":"AES","cryptoProperties":{"assetType":"algorithm","algorithmProperties":{"algorithmFamily":"AES"}}}]});
             let result = validator().validate(&serde_json::to_vec(&input).unwrap(), false);
+
             if spec == "1.7" {
                 assert!(result.is_ok());
             } else {
@@ -290,6 +315,7 @@ fn schema_selection_ignores_instance_schema_and_never_contacts_listener() {
             }
         }
     }
+
     assert!(matches!(listener.accept(), Err(error) if error.kind() == io::ErrorKind::WouldBlock));
 }
 
@@ -304,6 +330,7 @@ fn retriever_denies_all_nonregistered_resources() {
         let error = DenyRetrieval
             .retrieve(&jsonschema::Uri::parse(uri.to_owned()).unwrap())
             .unwrap_err();
+
         assert_eq!(error.downcast_ref::<ResourceRefused>().unwrap().uri, uri);
         assert!(
             jsonschema::options()
@@ -334,6 +361,7 @@ fn counts_schema_component_locations_not_component_shaped_values() {
             "annotations":[{"subjects":["lib"],"annotator":{"component":{"type":"application","name":"annotator"}},"timestamp":"2025-01-01T00:00:00Z","text":"review"}],
             "properties":[{"name":"components","value":"[{\"type\":\"library\",\"name\":\"fake\"}]"}]
         });
+
         assert_eq!(
             validator()
                 .validate(&serde_json::to_vec(&input).unwrap(), true)
@@ -354,11 +382,14 @@ fn native_writer_produces_valid_inventory_and_keeps_graph_and_properties() {
     .with_metadata_component(json!({
         "type":"application", "bom-ref":"root", "name":"fixture-app", "version":"3"
     }));
+
     let mut bytes = Vec::new();
     document.write(&mut bytes).unwrap();
     let summary = validator().validate(&bytes, false).unwrap();
+
     assert_eq!(summary.spec_version(), "1.6");
     assert_eq!(summary.component_count(), 1);
+
     let output: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(output["version"], 1);
     assert_eq!(
@@ -373,6 +404,7 @@ fn native_writer_produces_valid_inventory_and_keeps_graph_and_properties() {
         output["metadata"]["component"],
         json!({"type":"application","bom-ref":"root","name":"fixture-app","version":"3"})
     );
+
     let mut bytes = Vec::new();
     Document::new(vec![], vec![], vec![])
         .write(&mut bytes)
@@ -389,6 +421,7 @@ fn native_writer_produces_valid_inventory_and_keeps_graph_and_properties() {
 #[test]
 fn native_writer_propagates_io_errors() {
     struct FailingWriter;
+
     impl Write for FailingWriter {
         fn write(&mut self, _: &[u8]) -> io::Result<usize> {
             Err(io::Error::new(
@@ -396,10 +429,12 @@ fn native_writer_propagates_io_errors() {
                 "test writer",
             ))
         }
+
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
     }
+
     assert_eq!(
         Document::new(vec![], vec![], vec![])
             .write(&mut FailingWriter)

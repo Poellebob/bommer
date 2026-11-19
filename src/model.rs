@@ -52,8 +52,10 @@ impl Name {
         {
             return Err(NameError::InvalidCharacters);
         }
+
         Ok(Self(value))
     }
+
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
@@ -72,12 +74,14 @@ impl Scope {
             Self::Application { name, .. } => name.as_str(),
         }
     }
+
     pub(crate) fn version(&self) -> Option<&str> {
         match self {
             Self::Host => None,
             Self::Application { version, .. } => version.as_deref(),
         }
     }
+
     pub(crate) fn is_host(&self) -> bool {
         matches!(self, Self::Host)
     }
@@ -98,6 +102,7 @@ impl Target {
             _ => None,
         }
     }
+
     pub(crate) fn display(&self) -> String {
         match self {
             Self::Host => String::new(),
@@ -127,14 +132,17 @@ impl CommandSpec {
         if executable.is_empty() {
             return Err(CommandError::EmptyExecutable);
         }
+
         Ok(Self {
             executable,
             arguments,
         })
     }
+
     pub(crate) fn executable(&self) -> &OsStr {
         &self.executable
     }
+
     pub(crate) fn arguments(&self) -> &[OsString] {
         &self.arguments
     }
@@ -172,6 +180,7 @@ impl Backend {
             Self::Import { .. } => "import",
         }
     }
+
     pub(crate) fn is_native(&self) -> bool {
         matches!(
             self,
@@ -195,8 +204,10 @@ pub(crate) enum JobError {
     BackendKind,
     #[error("backend does not support this target or scope")]
     BackendTarget,
+
     #[error("collector options are missing or invalid")]
     Options,
+
     #[error("application name 'host' is reserved")]
     ReservedName,
 }
@@ -213,6 +224,7 @@ impl Job {
         if !host && scope.name() == "host" {
             return Err(JobError::ReservedName);
         }
+
         let kind_ok = match &backend {
             Backend::Command(_) => true,
             Backend::Hbom => kind == InventoryKind::Hbom,
@@ -222,6 +234,7 @@ impl Job {
         if !kind_ok {
             return Err(JobError::BackendKind);
         }
+
         if !host && matches!(target, Target::Host) {
             return Err(JobError::BackendTarget);
         }
@@ -233,6 +246,7 @@ impl Job {
         {
             return Err(JobError::BackendTarget);
         }
+
         match &backend {
             Backend::Hbom if !host => return Err(JobError::BackendTarget),
             Backend::Syft {
@@ -278,6 +292,7 @@ impl Job {
             }
             _ => {}
         }
+
         Ok(Self {
             scope,
             inventory,
@@ -286,21 +301,27 @@ impl Job {
             backend,
         })
     }
+
     pub(crate) fn scope(&self) -> &Scope {
         &self.scope
     }
+
     pub(crate) fn inventory(&self) -> Option<&Name> {
         self.inventory.as_ref()
     }
+
     pub(crate) fn kind(&self) -> InventoryKind {
         self.kind
     }
+
     pub(crate) fn target(&self) -> &Target {
         &self.target
     }
+
     pub(crate) fn backend(&self) -> &Backend {
         &self.backend
     }
+
     pub(crate) fn stem(&self) -> String {
         match &self.inventory {
             Some(name) => format!(
@@ -348,6 +369,7 @@ pub(crate) struct Diagnostic {
     #[serde(skip_serializing_if = "Option::is_none")]
     path: Option<String>,
 }
+
 impl Diagnostic {
     pub(crate) fn new(code: DiagnosticCode, path: Option<PathBuf>) -> Self {
         Self {
@@ -355,6 +377,7 @@ impl Diagnostic {
             path: path.as_deref().map(path_text),
         }
     }
+
     #[cfg(test)]
     pub(crate) fn code(&self) -> DiagnosticCode {
         self.code
@@ -388,6 +411,7 @@ impl CollectionOutcome {
         } else {
             Status::Collected
         };
+
         Self {
             status,
             findings,
@@ -399,6 +423,7 @@ impl CollectionOutcome {
             target: None,
         }
     }
+
     pub(crate) fn external() -> Self {
         Self {
             status: Status::Collected,
@@ -411,35 +436,45 @@ impl CollectionOutcome {
             target: None,
         }
     }
+
     pub(crate) fn status(&self) -> Status {
         self.status
     }
+
     pub(crate) fn findings(&self) -> usize {
         self.findings
     }
+
     pub(crate) fn coverage(&self) -> Coverage {
         self.coverage
     }
+
     pub(crate) fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
     }
+
     pub(crate) fn collector_version(&self) -> Option<&str> {
         self.collector_version.as_deref()
     }
+
     pub(crate) fn evidence(&self) -> &serde_json::Value {
         &self.evidence
     }
+
     pub(crate) fn with_exclusions(mut self, exclusions: Vec<String>) -> Self {
         self.exclusions = Some(exclusions);
         self
     }
+
     pub(crate) fn with_target(mut self, target: String) -> Self {
         self.target = Some(target);
         self
     }
+
     pub(crate) fn exclusions(&self) -> Option<&[String]> {
         self.exclusions.as_deref()
     }
+
     pub(crate) fn target(&self) -> Option<&str> {
         self.target.as_deref()
     }
@@ -495,12 +530,14 @@ impl Failure {
             limit: None,
         }
     }
+
     pub(crate) fn exited(code: Option<i32>) -> Self {
         Self {
             exit_code: code,
             ..Self::new(FailureKind::ProcessExit)
         }
     }
+
     pub(crate) fn limited(stream: &'static str, limit: usize) -> Self {
         Self {
             stream: Some(stream),
@@ -531,6 +568,7 @@ impl CollectionContext {
             cancelled,
         }
     }
+
     pub(crate) fn check(&self) -> Result<(), Interrupted> {
         if self.cancelled.load(Ordering::Relaxed) {
             Err(Interrupted::Cancelled)
@@ -540,9 +578,11 @@ impl CollectionContext {
             Ok(())
         }
     }
+
     pub(crate) fn deadline(&self) -> Instant {
         self.deadline
     }
+
     pub(crate) fn cancelled(&self) -> &AtomicBool {
         &self.cancelled
     }

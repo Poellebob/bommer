@@ -14,6 +14,7 @@ fn capture_preserves_both_pipes_and_literal_arguments() {
         "$HOME; * space",
     ]
     .map(OsString::from);
+
     let output = Process::capture(
         OsStr::new("/bin/sh"),
         &arguments,
@@ -23,6 +24,7 @@ fn capture_preserves_both_pipes_and_literal_arguments() {
         1024,
     )
     .unwrap();
+
     assert_eq!(output.stdout(), b"$HOME; * space");
     assert_eq!(output.stderr(), b"diagnostic");
 }
@@ -34,6 +36,7 @@ fn capture_drains_large_pipes_without_deadlock() {
         "i=0; while [ $i -lt 20000 ]; do printf 'abcd'; printf 'efgh' >&2; i=$((i+1)); done",
     ]
     .map(OsString::from);
+
     let output = Process::capture(
         OsStr::new("/bin/sh"),
         &arguments,
@@ -43,6 +46,7 @@ fn capture_drains_large_pipes_without_deadlock() {
         80000,
     )
     .unwrap();
+
     assert_eq!(output.stdout(), b"abcd".repeat(20000));
     assert_eq!(output.stderr(), b"efgh".repeat(20000));
 }
@@ -62,10 +66,12 @@ fn capture_enforces_each_limit_and_exit_status() {
             stderr_limit,
         )
         .unwrap_err();
+
         assert!(
             matches!(error, ProcessError::OutputLimit { stream: actual, limit: 2 } if actual == stream)
         );
     }
+
     let error = Process::capture(
         OsStr::new("/bin/sh"),
         &["-c".into(), "exit 7".into()],
@@ -75,6 +81,7 @@ fn capture_enforces_each_limit_and_exit_status() {
         0,
     )
     .unwrap_err();
+
     assert!(matches!(error, ProcessError::Exit { code: Some(7) }));
 }
 
@@ -90,6 +97,7 @@ fn interrupted_capture_does_not_start_executable() {
             0,
         )
         .unwrap_err();
+
         assert!(matches!(
             (cancelled, error),
             (true, ProcessError::Cancelled) | (false, ProcessError::Timeout)
@@ -102,6 +110,7 @@ fn timeout_kills_descendants_holding_pipes_after_parent_exit() {
     let directory = tempfile::tempdir().unwrap();
     let pid_path = directory.path().join("pid");
     let script = "sleep 60 & printf '%s' $! > \"$1\"; exit 0";
+
     let error = Process::capture(
         OsStr::new("/bin/sh"),
         &[
@@ -116,7 +125,9 @@ fn timeout_kills_descendants_holding_pipes_after_parent_exit() {
         100,
     )
     .unwrap_err();
+
     assert!(matches!(error, ProcessError::Timeout));
+
     let pid: i32 = std::fs::read_to_string(pid_path).unwrap().parse().unwrap();
     // A killed orphan can remain a zombie until the system's reaper runs.
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -138,15 +149,18 @@ fn timeout_kills_descendants_holding_pipes_after_parent_exit() {
 #[test]
 fn stream_accepts_non_send_writers_and_propagates_write_errors() {
     struct Broken(std::rc::Rc<()>);
+
     impl Write for Broken {
         fn write(&mut self, _: &[u8]) -> io::Result<usize> {
             let _ = &self.0;
             Err(io::Error::from(io::ErrorKind::BrokenPipe))
         }
+
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
     }
+
     let error = Process::stream(
         OsStr::new("/bin/sh"),
         &["-c".into(), "printf abc".into()],
@@ -156,6 +170,7 @@ fn stream_accepts_non_send_writers_and_propagates_write_errors() {
         &mut Vec::new(),
     )
     .unwrap_err();
+
     assert!(
         matches!(error, ProcessError::Io(source) if source.kind() == io::ErrorKind::BrokenPipe)
     );
@@ -164,6 +179,7 @@ fn stream_accepts_non_send_writers_and_propagates_write_errors() {
 #[test]
 fn stream_preserves_stderr_and_exit_status_without_publishing_stdout() {
     let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+
     let error = Process::stream(
         OsStr::new("/bin/sh"),
         &[
@@ -176,6 +192,7 @@ fn stream_preserves_stderr_and_exit_status_without_publishing_stdout() {
         &mut stderr,
     )
     .unwrap_err();
+
     assert!(matches!(error, ProcessError::Exit { code: Some(7) }));
     assert_eq!(stderr, b"fixture failure\n");
     assert!(stdout.is_empty());
@@ -184,6 +201,7 @@ fn stream_preserves_stderr_and_exit_status_without_publishing_stdout() {
 #[test]
 fn stream_preserves_stderr_on_timeout() {
     let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+
     let error = Process::stream(
         OsStr::new("/bin/sh"),
         &[
@@ -196,6 +214,7 @@ fn stream_preserves_stderr_on_timeout() {
         &mut stderr,
     )
     .unwrap_err();
+
     assert!(matches!(error, ProcessError::Timeout));
     assert_eq!(stderr, b"fixture pending\n");
     assert!(stdout.is_empty());
@@ -204,6 +223,7 @@ fn stream_preserves_stderr_on_timeout() {
 #[test]
 fn stream_preserves_only_bounded_stderr_on_log_overflow() {
     let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+
     let error = Process::stream(
         OsStr::new("/bin/sh"),
         &["-c".into(), "head -c 1048577 /dev/zero >&2".into()],
@@ -213,6 +233,7 @@ fn stream_preserves_only_bounded_stderr_on_log_overflow() {
         &mut stderr,
     )
     .unwrap_err();
+
     assert!(matches!(
         error,
         ProcessError::OutputLimit {
@@ -229,6 +250,7 @@ fn executable_preflight_rejects_non_executable_files() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("not-executable");
     std::fs::write(&path, b"fixture").unwrap();
+
     assert!(matches!(
         Process::find_executable(path.as_os_str()),
         Err(ProcessError::MissingExecutable { .. })
@@ -245,6 +267,7 @@ fn cancellation_stops_a_running_group_after_readiness() {
     let directory = tempfile::tempdir().unwrap();
     let ready = directory.path().join("ready");
     let cancelled = AtomicBool::new(false);
+
     std::thread::scope(|scope| {
         let worker = scope.spawn(|| {
             Process::capture(
@@ -261,12 +284,15 @@ fn cancellation_stops_a_running_group_after_readiness() {
                 100,
             )
         });
+
         let deadline = Instant::now() + Duration::from_secs(3);
         while !ready.exists() {
             assert!(Instant::now() < deadline);
             std::thread::yield_now();
         }
+
         cancelled.store(true, Ordering::Relaxed);
+
         assert!(matches!(
             worker.join().unwrap(),
             Err(ProcessError::Cancelled)
@@ -277,6 +303,7 @@ fn cancellation_stops_a_running_group_after_readiness() {
 #[test]
 fn stream_refuses_an_oversized_bom_without_publishing_prefix() {
     let mut output = Vec::new();
+
     let error = Process::stream(
         OsStr::new("/bin/sh"),
         &["-c".into(), "head -c 67108865 /dev/zero".into()],
@@ -286,6 +313,7 @@ fn stream_refuses_an_oversized_bom_without_publishing_prefix() {
         &mut Vec::new(),
     )
     .unwrap_err();
+
     assert!(matches!(
         error,
         ProcessError::OutputLimit {

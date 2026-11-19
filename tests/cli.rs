@@ -16,6 +16,37 @@ fn scan(config: &Path, command: &str) -> Output {
 }
 
 #[test]
+fn help_shows_usage_commands_and_examples() {
+    let output = run(&["--help".as_ref()]);
+
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Usage:"));
+    assert!(stdout.contains("Commands:"));
+    assert!(stdout.contains("Examples:"));
+    assert!(stdout.contains("bommer scan --config"));
+    assert!(stdout.contains("--only"));
+    assert!(stdout.contains("--application"));
+
+    let output = run(&["-h".as_ref()]);
+
+    assert_eq!(output.status.code(), Some(0));
+
+    let output = run(&["scan".as_ref(), "--help".as_ref()]);
+
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("--config"));
+    assert!(stdout.contains("--only"));
+    assert!(stdout.contains("--application"));
+
+    let output = run(&["help".as_ref()]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(!output.stdout.is_empty());
+}
+
+#[test]
 fn binary_preserves_import_bytes_and_reports_usage_and_partial_exit_codes() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("source.json");
@@ -34,13 +65,16 @@ fn binary_preserves_import_bytes_and_reports_usage_and_partial_exit_codes() {
         .to_string(),
     )
     .unwrap();
+
     let output = scan(&config, "scan");
+
     assert_eq!(output.status.code(), Some(0));
     let run_directory = std::path::PathBuf::from(String::from_utf8(output.stdout).unwrap().trim());
     assert_eq!(
         fs::read(run_directory.join("host.imported.cbom.cdx.json")).unwrap(),
         bytes
     );
+
     let manifest: Value =
         serde_json::from_slice(&fs::read(run_directory.join("manifest.json")).unwrap()).unwrap();
     assert_eq!(manifest["results"][0]["status"], "no-findings");
@@ -50,8 +84,11 @@ fn binary_preserves_import_bytes_and_reports_usage_and_partial_exit_codes() {
     );
 
     let invalid = run(&["scan".as_ref(), "--only".as_ref(), "invalid".as_ref()]);
+
     assert_eq!(invalid.status.code(), Some(2));
+
     let missing = directory.path().join("absent.yaml");
+
     assert_eq!(scan(&missing, "scan").status.code(), Some(2));
 
     fs::write(&config, json!({
@@ -61,7 +98,9 @@ fn binary_preserves_import_bytes_and_reports_usage_and_partial_exit_codes() {
             "enabled": true, "backend": "certificates", "certificates": {"paths": [directory.path().join("missing.pem")]}
         }}]}
     }).to_string()).unwrap();
+
     let partial = scan(&config, "scan");
+
     assert_eq!(partial.status.code(), Some(1));
     let run_directory = std::path::PathBuf::from(String::from_utf8(partial.stdout).unwrap().trim());
     let manifest: Value =
@@ -92,7 +131,127 @@ fn doctor_checks_readiness_without_running_collector_or_creating_output() {
         .to_string(),
     )
     .unwrap();
+
     assert_eq!(scan(&config, "doctor").status.code(), Some(0));
     assert!(!marker.exists());
     assert!(!root.exists());
+}
+
+#[test]
+fn scan_and_doctor_reject_invalid_selections_without_creating_output() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("source.json");
+    fs::write(
+        &source,
+        b"{\"bomFormat\":\"CycloneDX\",\"specVersion\":\"1.6\",\"version\":1,\"components\":[]}",
+    )
+    .unwrap();
+    let root = directory.path().join("output");
+    let config = directory.path().join("config.json");
+    fs::write(
+        &config,
+        json!({
+            "version": 1,
+            "output": {"directory": root},
+            "host": {"inventories": [{"name": "imported", "kind": "cbom", "collector": {
+                "enabled": true, "backend": "import", "import": {"path": source}
+            }}]}
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let ready = scan(&config, "doctor");
+
+    assert_eq!(ready.status.code(), Some(0));
+    assert!(ready.stderr.is_empty());
+    assert!(!root.exists());
+
+    for command in ["scan", "doctor"] {
+        let unknown_application = run(&[
+            command.as_ref(),
+            "--config".as_ref(),
+            config.as_os_str(),
+            "--application".as_ref(),
+            "unknown-app".as_ref(),
+        ]);
+
+        assert_eq!(unknown_application.status.code(), Some(2), "{command}");
+        assert!(unknown_application.stdout.is_empty(), "{command}");
+        assert!(!unknown_application.stderr.is_empty(), "{command}");
+        assert!(!root.exists(), "{command}: unknown application");
+
+        let invalid_application = run(&[
+            command.as_ref(),
+            "--config".as_ref(),
+            config.as_os_str(),
+            "--application".as_ref(),
+            "invalid/name".as_ref(),
+        ]);
+
+        assert_eq!(invalid_application.status.code(), Some(2), "{command}");
+        assert!(invalid_application.stdout.is_empty(), "{command}");
+        assert!(!invalid_application.stderr.is_empty(), "{command}");
+        assert!(!root.exists(), "{command}: invalid application name");
+
+        let nonmatching_inventory = run(&[
+            command.as_ref(),
+            "--config".as_ref(),
+            config.as_os_str(),
+            "--only".as_ref(),
+            "sbom".as_ref(),
+        ]);
+
+        assert_eq!(nonmatching_inventory.status.code(), Some(2), "{command}");
+        assert!(nonmatching_inventory.stdout.is_empty(), "{command}");
+        assert!(!nonmatching_inventory.stderr.is_empty(), "{command}");
+        assert!(!root.exists(), "{command}: nonmatching inventory filter");
+    }
+}
+
+#[test]
+fn doctor_reports_missing_collector_without_creating_output() {
+    let directory = tempfile::tempdir().unwrap();
+    let executable = directory.path().join("missing-collector");
+    let root = directory.path().join("output");
+    let config = directory.path().join("config.json");
+    fs::write(
+        &config,
+        json!({
+            "version": 1,
+            "output": {"directory": root},
+            "host": {"sbom": {"enabled": true, "backend": "command", "command": [
+                executable
+            ]}}
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let output = scan(&config, "doctor");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(!output.stderr.is_empty());
+    assert!(!root.exists());
+    assert!(!executable.exists());
+}
+
+#[test]
+fn scan_and_doctor_sanitize_control_characters_in_missing_config_errors() {
+    let directory = tempfile::tempdir().unwrap();
+    let missing = directory.path().join("missing\n\r\t\x1b[31m.yaml");
+
+    for command in ["scan", "doctor"] {
+        let output = scan(&missing, command);
+
+        assert_eq!(output.status.code(), Some(2), "{command}");
+        assert!(output.stdout.is_empty(), "{command}");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        let diagnostic = stderr.strip_suffix('\n').unwrap();
+        assert!(!diagnostic.is_empty(), "{command}");
+        assert!(!diagnostic.contains('\n'), "{command}");
+        assert!(!diagnostic.contains('\x1b'), "{command}");
+        assert!(!diagnostic.chars().any(char::is_control), "{command}");
+    }
 }

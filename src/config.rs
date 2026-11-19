@@ -1,3 +1,5 @@
+//! Decode configuration into validated collector jobs and run settings.
+
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -26,16 +28,19 @@ pub(crate) enum ConfigError {
         #[source]
         source: std::io::Error,
     },
+
     #[error("invalid YAML configuration: {0}")]
     InvalidYaml(#[source] Box<serde_saphyr::Error>),
     #[error("configuration must contain a nonempty YAML document")]
     EmptyDocument,
     #[error("version must be 1, got {version}")]
     UnsupportedVersion { version: i64 },
+
     #[error("output.directory is required")]
     MissingOutputDirectory,
     #[error("timeout must be a positive Go duration")]
     InvalidTimeout,
+
     #[error("invalid name {name:?} in {scope}: {source}")]
     InvalidName {
         scope: String,
@@ -45,6 +50,7 @@ pub(crate) enum ConfigError {
     },
     #[error("duplicate or reserved name {name:?} in {scope}")]
     DuplicateName { scope: String, name: String },
+
     #[error("invalid target for application {name}")]
     InvalidTarget { name: String },
     #[error("invalid inventory kind {kind:?} in {scope}")]
@@ -67,6 +73,7 @@ pub(crate) enum CollectorError {
     UnsupportedBackend { backend: String },
     #[error("required collector options are missing or invalid")]
     InvalidOptions,
+
     #[error("invalid backend contract")]
     Contract(#[source] JobError),
 }
@@ -201,6 +208,7 @@ impl Config {
             path: path.to_owned(),
             source,
         })?;
+
         Self::parse(&text)
     }
 
@@ -213,6 +221,7 @@ impl Config {
         let document = serde_saphyr::from_str_with_options::<Option<Document>>(text, options)
             .map_err(|source| ConfigError::InvalidYaml(Box::new(source)))?
             .ok_or(ConfigError::EmptyDocument)?;
+
         if document.version != 1 {
             return Err(ConfigError::UnsupportedVersion {
                 version: document.version,
@@ -221,6 +230,7 @@ impl Config {
         if document.output.directory.is_empty() {
             return Err(ConfigError::MissingOutputDirectory);
         }
+
         let timeout = if document.timeout.is_empty() {
             Duration::from_secs(600)
         } else {
@@ -232,6 +242,7 @@ impl Config {
             jobs: Vec::new(),
             applications: Vec::new(),
         };
+
         config.add_collector(
             &Scope::Host,
             &Target::Host,
@@ -247,6 +258,7 @@ impl Config {
             document.host.sbom,
         )?;
         config.add_inventories(&Scope::Host, &Target::Host, document.host.inventories)?;
+
         let mut seen = HashSet::from([String::from("host")]);
         for app in document.applications {
             let name = checked_name(&app.name, "applications")?;
@@ -256,6 +268,7 @@ impl Config {
                     name: app.name,
                 });
             }
+
             let target = match app.target.kind.as_str() {
                 "directory" if !app.target.path.is_empty() && app.target.image.is_empty() => {
                     Target::Directory(app.target.path.into())
@@ -268,6 +281,7 @@ impl Config {
                 }
                 _ => return Err(ConfigError::InvalidTarget { name: app.name }),
             };
+
             config.applications.push(name.clone());
             let scope = Scope::Application {
                 name,
@@ -277,18 +291,22 @@ impl Config {
             config.add_collector(&scope, &target, None, InventoryKind::Cbom, app.cbom)?;
             config.add_inventories(&scope, &target, app.inventories)?;
         }
+
         Ok(config)
     }
 
     pub(crate) fn output_directory(&self) -> &Path {
         &self.output_directory
     }
+
     pub(crate) fn timeout(&self) -> Duration {
         self.timeout
     }
+
     pub(crate) fn jobs(&self) -> &[Job] {
         &self.jobs
     }
+
     pub(crate) fn applications(&self) -> &[Name] {
         &self.applications
     }
@@ -308,6 +326,7 @@ impl Config {
                     name: inventory.name,
                 });
             }
+
             let kind = match inventory.kind.as_str() {
                 "hbom" => InventoryKind::Hbom,
                 "sbom" => InventoryKind::Sbom,
@@ -321,6 +340,7 @@ impl Config {
             };
             self.add_collector(scope, target, Some(name), kind, inventory.collector)?;
         }
+
         Ok(())
     }
 
@@ -335,6 +355,7 @@ impl Config {
         if !collector.enabled {
             return Ok(());
         }
+
         let context = format!(
             "{}.{}",
             scope.name(),
@@ -344,6 +365,7 @@ impl Config {
             scope: context.clone(),
             source,
         };
+
         if (collector.nix.is_some() && collector.backend != "nix")
             || (collector.certificates.is_some() && collector.backend != "certificates")
             || (collector.import.is_some() && collector.backend != "import")
@@ -356,6 +378,7 @@ impl Config {
         {
             return Err(invalid(CollectorError::UnusedOptions));
         }
+
         let backend = match collector.backend.as_str() {
             "hbom" => Backend::Hbom,
             "syft" => Backend::Syft {
@@ -369,6 +392,7 @@ impl Config {
                     .ok_or_else(|| invalid(CollectorError::InvalidOptions))?;
                 let spec = CommandSpec::new(executable, args.collect())
                     .map_err(|_| invalid(CollectorError::InvalidOptions))?;
+
                 Backend::Command(spec)
             }
             "nix" => Backend::Nix {
@@ -381,6 +405,7 @@ impl Config {
                 if !(0..=64 << 20).contains(&options.max_file_bytes) {
                     return Err(invalid(CollectorError::InvalidOptions));
                 }
+
                 Backend::Certificates {
                     paths: options.paths,
                     max_file_bytes: if options.max_file_bytes == 0 {
@@ -403,9 +428,11 @@ impl Config {
                 }));
             }
         };
+
         let job = Job::new(scope.clone(), inventory, kind, target.clone(), backend)
             .map_err(|source| invalid(CollectorError::Contract(source)))?;
         self.jobs.push(job);
+
         Ok(())
     }
 }
@@ -421,6 +448,7 @@ fn checked_name(value: &str, scope: &str) -> Result<Name, ConfigError> {
 fn parse_duration(text: &str) -> Option<Duration> {
     let mut rest = text.strip_prefix('+').unwrap_or(text);
     let mut total = 0_u64;
+
     while !rest.is_empty() {
         let end = rest
             .bytes()
@@ -430,12 +458,14 @@ fn parse_duration(text: &str) -> Option<Duration> {
         if !number.bytes().any(|byte| byte.is_ascii_digit()) {
             return None;
         }
+
         let mut parts = number.split('.');
         let whole = parts.next()?;
         let fraction = parts.next().unwrap_or("");
         if parts.next().is_some() {
             return None;
         }
+
         rest = &rest[end..];
         let (unit, scale) = [
             ("ns", 1_u64),
@@ -450,12 +480,14 @@ fn parse_duration(text: &str) -> Option<Duration> {
         .into_iter()
         .find(|(unit, _)| rest.starts_with(unit))?;
         rest = &rest[unit.len()..];
+
         let integral = if whole.is_empty() {
             0
         } else {
             whole.parse::<u64>().ok()?
         };
         let mut nanos = integral.checked_mul(scale)?;
+
         // Match time.ParseDuration's bounded significand and floating-point scaling.
         let mut numerator = 0_u64;
         let mut divisor = 1_f64;
@@ -473,10 +505,12 @@ fn parse_duration(text: &str) -> Option<Duration> {
         if numerator > 0 {
             nanos = nanos.checked_add((numerator as f64 * (scale as f64 / divisor)) as u64)?;
         }
+
         total = total.checked_add(nanos)?;
         if total > i64::MAX as u64 {
             return None;
         }
     }
+
     (total > 0).then(|| Duration::from_nanos(total))
 }

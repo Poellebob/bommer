@@ -2,6 +2,7 @@
 # inventories you do not want. Nothing discovers roots or scans all /nix/store.
 version: 1
 timeout: 10m
+
 output:
   directory: ./results
 

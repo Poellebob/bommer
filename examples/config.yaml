@@ -1,5 +1,6 @@
 version: 1
 timeout: 10m
+
 output:
   directory: /var/lib/bommer/results
 

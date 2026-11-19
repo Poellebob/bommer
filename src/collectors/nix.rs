@@ -60,6 +60,7 @@ fn roots(job: &Job) -> Result<(Vec<PathBuf>, Vec<String>), NixError> {
     } else {
         roots.clone()
     };
+
     let mut resolved = BTreeSet::new();
     for path in &configured {
         let canonical = path
@@ -74,6 +75,7 @@ fn roots(job: &Job) -> Result<(Vec<PathBuf>, Vec<String>), NixError> {
         }
         resolved.insert(text.to_owned());
     }
+
     Ok((configured, resolved.into_iter().collect()))
 }
 
@@ -124,6 +126,7 @@ fn valid_hash(hash: &str) -> bool {
             return value.bytes().all(|byte| alphabet.contains(&byte));
         }
     }
+
     false
 }
 
@@ -151,6 +154,7 @@ fn decode(data: &[u8]) -> Result<BTreeMap<String, PathInfo>, NixError> {
         }
         _ => return Err(NixError::InvalidMetadata),
     }
+
     if entries.is_empty() {
         return Err(NixError::InvalidMetadata);
     }
@@ -165,6 +169,7 @@ fn decode(data: &[u8]) -> Result<BTreeMap<String, PathInfo>, NixError> {
         {
             return Err(NixError::InvalidMetadata);
         }
+
         for reference in &info.references {
             if !entries.contains_key(reference) {
                 return Err(NixError::IncompleteClosure {
@@ -173,6 +178,7 @@ fn decode(data: &[u8]) -> Result<BTreeMap<String, PathInfo>, NixError> {
             }
         }
     }
+
     Ok(entries)
 }
 
@@ -194,16 +200,20 @@ pub(crate) fn collect(
             16 << 10,
         )
     };
+
     let version_output = run(&["--version".into()])?;
     let version = std::str::from_utf8(version_output.stdout())
         .map_err(|_| NixError::InvalidVersion)?
         .trim();
     let (args, store) = query_arguments(version, &roots)?;
     let captured = run(&args)?;
+
     context.check()?;
     let (document, findings) = closure_document(captured.stdout(), &roots, job, version)?;
+
     context.check()?;
     document.write(output)?;
+
     Ok(CollectionOutcome::observed(
         findings,
         Coverage::DeclaredScope,
@@ -232,6 +242,7 @@ pub(crate) fn query_arguments(
         major.parse::<u64>().map_err(|_| NixError::InvalidVersion)?,
         minor.parse::<u64>().map_err(|_| NixError::InvalidVersion)?,
     );
+
     let store = if Path::new("/nix/var/nix/daemon-socket/socket")
         .metadata()
         .is_ok_and(|metadata| metadata.file_type().is_socket())
@@ -257,6 +268,7 @@ pub(crate) fn query_arguments(
         args.extend(["--json-format".into(), "1".into()]);
     }
     args.extend(roots.iter().map(Into::into));
+
     Ok((args, store))
 }
 
@@ -274,6 +286,7 @@ pub(crate) fn closure_document(
             });
         }
     }
+
     let mut components = Vec::new();
     let mut dependencies = Vec::new();
     for (path, info) in &entries {
@@ -291,12 +304,14 @@ pub(crate) fn closure_document(
         let references: BTreeSet<_> = info.references.iter().collect();
         dependencies.push(json!({"ref":path,"dependsOn":references}));
     }
+
     let reference = format!("bommer:inventory:{}", job.stem());
     let mut root = json!({"type":"file", "bom-ref":reference, "name":job.scope().name()});
     if let Some(version) = job.scope().version() {
         root["version"] = version.into();
     }
     dependencies.push(json!({"ref":reference,"dependsOn":roots}));
+
     let document = Document::new(
         components,
         dependencies,
@@ -306,5 +321,6 @@ pub(crate) fn closure_document(
         ],
     )
     .with_metadata_component(root);
+
     Ok((document, entries.len()))
 }

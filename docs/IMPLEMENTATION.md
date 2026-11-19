@@ -5,6 +5,86 @@ just for recipes, and nFPM for native packages.
 Application identities, scopes, and enabled collectors belong in
 configuration, not compiled application-specific code.
 
+## Code Organization
+
+Start in `src/main.rs`: CLI definitions describe the available requests,
+`main` shows dispatch and terminal output, and `CliError` defines
+the process exit policy. CLI options are translated into domain selections here;
+production modules never import CLI types.
+
+Each module owns a concrete responsibility:
+
+| Module | Responsibility |
+| --- | --- |
+| `config` | Decode configuration into validated jobs and run settings. |
+| `plan` | Select jobs and reject unknown applications, empty selections, and name collisions. |
+| `scan` | Execute a scan: collect, validate, publish, and record each job. |
+| `doctor` | Check selected collectors for readiness without executing collections. |
+| `collectors` | Dispatch collection and preflight to the configured backend. |
+| `collectors::external` | Collect inventories through external commands. |
+| `collectors::nix` | Collect an explicitly configured local Nix closure. |
+| `collectors::certificates` | Observe certificates at explicitly configured filesystem paths. |
+| `collectors::import` | Read a trusted existing CBOM without changing its bytes. |
+| `bom` | Validate CycloneDX documents against embedded offline schemas. |
+| `bom::document` | Serialize native collector observations as CycloneDX documents. |
+| `bom::schemas` | Supply the embedded schemas and reference registry. |
+| `output` | Persist private run artifacts, logs, and manifest checkpoints. |
+| `process` | Run bounded subprocesses with deadline and cancellation enforcement. |
+| `json` | Decode bounded JSON while rejecting duplicate keys. |
+| `model` | Define the domain contracts shared by configuration, collection, and reporting. |
+
+`scan::run` owns signal setup and starts execution. `Scan::execute` keeps the
+per-job pipeline in one place; it also accepts explicit cancellation and timeout
+inputs for embedding in tests. `doctor` has no dependency on scan execution or
+output persistence. Both return reports; only `main` prints terminal results.
+
+The dependency graph below includes direct internal dependencies, excluding tests
+and external crates. An arrow means "depends on"; module declarations alone do
+not establish an edge.
+
+```mermaid
+flowchart TD
+    main --> config
+    main --> plan
+    main --> scan
+    main --> doctor
+    main --> model
+    config --> model
+    plan --> config
+    plan --> model
+    scan --> config
+    scan --> plan
+    scan --> bom
+    scan --> collectors
+    scan --> output
+    scan --> model
+    doctor --> collectors
+    doctor --> model
+    output --> model
+    bom --> schemas["bom::schemas"]
+    bom --> json
+    collectors --> certificates["collectors::certificates"]
+    collectors --> external["collectors::external"]
+    collectors --> import["collectors::import"]
+    collectors --> nix["collectors::nix"]
+    collectors --> model
+    collectors --> process
+    certificates --> document["bom::document"]
+    certificates --> model
+    external --> model
+    external --> process
+    import --> json
+    import --> model
+    nix --> document
+    nix --> model
+    nix --> process
+```
+
+Keep dependencies one-way. Readiness checks do not belong in scan execution,
+terminal formatting does not belong in collectors, and persistence must not
+decide CLI exit codes. Sibling test modules protect these boundaries and the
+observable behavior; `architecture_tests` rejects cycles and ancestor imports.
+
 ## Baseline
 
 Initial target: x86_64 Linux. Intended integration matrix: Ubuntu 26.04 LTS,
