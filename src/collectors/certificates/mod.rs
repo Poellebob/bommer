@@ -67,7 +67,6 @@ pub(crate) fn collect_with_limits(
 
 #[cfg(test)]
 mod tests {
-
     use crate::bom::validation::Validator;
     use crate::collection::context::CollectionContext;
     use crate::collection::outcome::{Coverage, DiagnosticCode, Status};
@@ -80,6 +79,7 @@ mod tests {
     use std::path::Path;
     use std::sync::{Arc, atomic::AtomicBool};
     use std::time::Duration;
+
     // Public P-384 fixture from x509-parser's MIT/Apache-2.0 no_extensions.pem.
     const CERTIFICATE: &[u8] = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -90,7 +90,12 @@ mod tests {
         CollectionContext::new(Duration::from_secs(10), Arc::new(AtomicBool::new(false)))
     }
 
-    fn certificate_job(root: &Path, paths: &[&str], limit: u64, identity: bool) -> Job {
+    fn certificate_job(
+        root: &Path,
+        paths: &[&str],
+        maximum_file_bytes: u64,
+        include_identity: bool,
+    ) -> Job {
         Job::new(
             Scope::Application {
                 name: Name::new("app".into()).unwrap(),
@@ -101,8 +106,8 @@ mod tests {
             Target::Directory(root.into()),
             Backend::Certificates {
                 paths: paths.iter().map(Into::into).collect(),
-                max_file_bytes: limit,
-                include_identity: identity,
+                max_file_bytes: maximum_file_bytes,
+                include_identity,
             },
         )
         .unwrap()
@@ -130,9 +135,14 @@ mod tests {
         for index in 0..20 {
             fs::write(branch.join(format!("{index}.pem")), CERTIFICATE).unwrap();
         }
-        let after = directory.path().join("after.pem");
-        fs::write(&after, CERTIFICATE).unwrap();
-        let job = certificate_job(&root, &[".", after.to_str().unwrap()], 4 << 20, false);
+        let subsequent_certificate = directory.path().join("after.pem");
+        fs::write(&subsequent_certificate, CERTIFICATE).unwrap();
+        let job = certificate_job(
+            &root,
+            &[".", subsequent_certificate.to_str().unwrap()],
+            4 << 20,
+            false,
+        );
         let mut output = Vec::new();
 
         let outcome =
@@ -265,17 +275,23 @@ mod tests {
             .iter()
             .find(|component| component["cryptoProperties"]["assetType"] == "certificate")
             .unwrap();
-        let metadata = &certificate["cryptoProperties"]["certificateProperties"];
+        let certificate_properties = &certificate["cryptoProperties"]["certificateProperties"];
         assert_eq!(
             certificate["bom-ref"],
             "certificate:sha256:39f41ff9385a90df31a90fc6c0c686cf2343dea2f18cd058339a0d00a07a51cb"
         );
-        assert_eq!(metadata["certificateFormat"], "X.509");
-        assert_eq!(metadata["notValidBefore"], "2018-11-13T02:54:40Z");
-        assert_eq!(metadata["notValidAfter"], "2019-11-13T02:54:40Z");
-        assert!(metadata.get("subjectName").is_none());
-        assert!(metadata.get("issuerName").is_none());
-        assert!(metadata.get("subjectPublicKeyRef").is_none());
+        assert_eq!(certificate_properties["certificateFormat"], "X.509");
+        assert_eq!(
+            certificate_properties["notValidBefore"],
+            "2018-11-13T02:54:40Z"
+        );
+        assert_eq!(
+            certificate_properties["notValidAfter"],
+            "2019-11-13T02:54:40Z"
+        );
+        assert!(certificate_properties.get("subjectName").is_none());
+        assert!(certificate_properties.get("issuerName").is_none());
+        assert!(certificate_properties.get("subjectPublicKeyRef").is_none());
         assert!(
             components
                 .iter()
@@ -312,32 +328,32 @@ mod tests {
             assert!(!text.contains(forbidden));
         }
 
-        let mut reordered = Vec::new();
+        let mut reordered_output = Vec::new();
 
         certificates::collect(
             &certificate_job(root, &["copy.der", "bundle.pem"], 4 << 20, false),
             &context(),
-            &mut reordered,
+            &mut reordered_output,
         )
         .unwrap();
 
-        assert_eq!(output, reordered);
+        assert_eq!(output, reordered_output);
 
-        let mut identity = Vec::new();
+        let mut identity_output = Vec::new();
 
         certificates::collect(
             &certificate_job(root, &["copy.der"], 4 << 20, true),
             &context(),
-            &mut identity,
+            &mut identity_output,
         )
         .unwrap();
 
         Validator::new()
             .unwrap()
-            .validate(&identity, false)
+            .validate(&identity_output, false)
             .unwrap();
-        let identity: Value = serde_json::from_slice(&identity).unwrap();
-        let certificate = identity["components"]
+        let identity_document: Value = serde_json::from_slice(&identity_output).unwrap();
+        let certificate = identity_document["components"]
             .as_array()
             .unwrap()
             .iter()
@@ -401,25 +417,25 @@ mod tests {
             .iter()
             .filter(|component| component["cryptoProperties"]["assetType"] == "certificate")
         {
-            let signature =
+            let signature_reference =
                 &certificate["cryptoProperties"]["certificateProperties"]["signatureAlgorithmRef"];
-            let asset = components
+            let signature_algorithm = components
                 .iter()
-                .find(|component| &component["bom-ref"] == signature)
+                .find(|component| &component["bom-ref"] == signature_reference)
                 .unwrap();
-            assert_eq!(asset["properties"][0]["value"], "signature");
+            assert_eq!(signature_algorithm["properties"][0]["value"], "signature");
 
-            let public_key = &certificate["properties"]
+            let public_key_reference = &certificate["properties"]
                 .as_array()
                 .unwrap()
                 .iter()
                 .find(|property| property["name"] == "bommer:certificate:public-key-algorithm-ref")
                 .unwrap()["value"];
-            let asset = components
+            let public_key_algorithm = components
                 .iter()
-                .find(|component| &component["bom-ref"] == public_key)
+                .find(|component| &component["bom-ref"] == public_key_reference)
                 .unwrap();
-            assert_eq!(asset["properties"][0]["value"], "public-key");
+            assert_eq!(public_key_algorithm["properties"][0]["value"], "public-key");
         }
 
         let text = String::from_utf8(output).unwrap();
@@ -492,7 +508,7 @@ mod tests {
         )
         .unwrap();
 
-        for (path, limit, expected) in [
+        for (path, maximum_file_bytes, expected_diagnostic) in [
             ("bad.pem", 4 << 20, DiagnosticCode::MalformedCertificate),
             ("missing", 4 << 20, DiagnosticCode::MissingPath),
             ("oversize.der", 10, DiagnosticCode::LimitExceeded),
@@ -501,7 +517,7 @@ mod tests {
             let mut output = Vec::new();
 
             let outcome = certificates::collect(
-                &certificate_job(root, &[path], limit, false),
+                &certificate_job(root, &[path], maximum_file_bytes, false),
                 &context(),
                 &mut output,
             )
@@ -510,7 +526,7 @@ mod tests {
             assert_eq!(outcome.status, Status::Partial);
             assert_eq!(outcome.findings, 0);
             assert_eq!(outcome.diagnostics.len(), 1);
-            assert_eq!(outcome.diagnostics[0].code, expected);
+            assert_eq!(outcome.diagnostics[0].code, expected_diagnostic);
             assert_eq!(
                 validator.validate(&output, false).unwrap().component_count,
                 0

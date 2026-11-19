@@ -37,6 +37,7 @@ mod tests {
         ] {
             assert_eq!(path_text(Path::new(path)), expected);
         }
+
         assert_eq!(path_text(Path::new("/tmp/\u{e6}")), "/tmp/\u{e6}");
     }
 

@@ -15,7 +15,7 @@ const BOM_LIMIT: usize = 64 << 20;
 const LOG_LIMIT: usize = 1 << 20;
 
 #[derive(Debug, Clone)]
-pub(crate) struct CommandSpec {
+pub(crate) struct CommandSpecification {
     executable: OsString,
     pub(crate) arguments: Vec<OsString>,
 }
@@ -71,7 +71,7 @@ struct ProcessGuard {
 
 pub(crate) struct Process;
 
-impl CommandSpec {
+impl CommandSpecification {
     pub(crate) fn new(
         executable: OsString,
         arguments: Vec<OsString>,
@@ -173,6 +173,7 @@ impl Process {
         let mut stderr = guard.child.stderr.take().expect("stderr is piped");
         nonblocking(&stdout)?;
         nonblocking(&stderr)?;
+
         let (mut stdout_done, mut stderr_done) = (false, false);
         let mut status = None;
 
@@ -287,6 +288,7 @@ fn check_interruption(deadline: Instant, cancelled: &AtomicBool) -> Result<(), P
 fn nonblocking(pipe: &impl AsFd) -> io::Result<()> {
     let flags = fcntl_getfl(pipe)?;
     fcntl_setfl(pipe, flags | OFlags::NONBLOCK)?;
+
     Ok(())
 }
 
@@ -298,6 +300,7 @@ fn drain(
     done: &mut bool,
 ) -> Result<bool, ProcessError> {
     let mut buffer = [0; 16 * 1024];
+
     match pipe.read(&mut buffer) {
         Ok(0) => {
             *done = true;
@@ -331,14 +334,14 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
 
-    use crate::process::{CommandError, CommandSpec, Process, ProcessError, Stream};
+    use crate::process::{CommandError, CommandSpecification, Process, ProcessError, Stream};
 
     #[test]
     fn command_construction_preserves_literal_arguments() {
         let executable = std::ffi::OsString::from("scanner");
         let arguments = vec!["a b".into(), "$(touch unexpected)".into(), "*.json".into()];
 
-        let command = CommandSpec::new(executable, arguments).unwrap();
+        let command = CommandSpecification::new(executable, arguments).unwrap();
 
         assert_eq!(command.executable(), "scanner");
         assert_eq!(command.arguments, &["a b", "$(touch unexpected)", "*.json"]);
@@ -350,7 +353,7 @@ mod tests {
         let arguments = vec!["scan".into()];
 
         assert!(matches!(
-            CommandSpec::new(executable, arguments),
+            CommandSpecification::new(executable, arguments),
             Err(CommandError::EmptyExecutable)
         ));
     }
@@ -479,6 +482,7 @@ mod tests {
         assert!(matches!(error, ProcessError::Timeout));
 
         let pid: i32 = std::fs::read_to_string(pid_path).unwrap().parse().unwrap();
+
         // A killed orphan can remain a zombie until the system's reaper runs.
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {

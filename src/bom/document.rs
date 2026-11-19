@@ -46,12 +46,14 @@ impl Document {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{self, Write};
+    use std::sync::OnceLock;
+
+    use serde_json::json;
 
     use crate::bom::document::Document;
     use crate::bom::validation::Validator;
-    use serde_json::json;
-    use std::io::{self, Write};
-    use std::sync::OnceLock;
+
     fn validator() -> &'static Validator {
         static VALIDATOR: OnceLock<Validator> = OnceLock::new();
 

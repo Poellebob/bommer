@@ -64,6 +64,7 @@ mod tests {
         assert!(Arc::ptr_eq(&context.cancelled, &cancelled));
 
         cancelled.store(true, Ordering::Relaxed);
+
         assert_eq!(context.check(), Err(Interrupted::Cancelled));
         assert_eq!(cloned.check(), Err(Interrupted::Cancelled));
     }
@@ -74,8 +75,10 @@ mod tests {
         let context = CollectionContext::new(Duration::ZERO, Arc::clone(&cancelled));
 
         assert_eq!(context.check(), Err(Interrupted::Timeout));
+
         cancelled.store(true, Ordering::Relaxed);
         assert_eq!(context.check(), Err(Interrupted::Cancelled));
+
         cancelled.store(false, Ordering::Relaxed);
         assert_eq!(context.check(), Err(Interrupted::Timeout));
     }

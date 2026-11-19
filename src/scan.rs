@@ -198,10 +198,11 @@ mod tests {
         let path = directory.join(name);
         fs::write(&path, format!("#!/bin/sh\nset -eu\n{body}\n")).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+
         path
     }
 
-    fn command_config(commands: &[(&str, &Path)]) -> Config {
+    fn command_configuration(commands: &[(&str, &Path)]) -> Config {
         let inventories: Vec<_> = commands
             .iter()
             .map(|(name, executable)| {
@@ -212,6 +213,7 @@ mod tests {
                 })
             })
             .collect();
+
         // JSON is a YAML subset; serialization safely quotes temporary paths.
         Config::parse(
             &json!({
@@ -224,11 +226,11 @@ mod tests {
         .unwrap()
     }
 
-    fn execute(config: &Config, root: &Path, cancelled: bool) -> ScanReport {
+    fn execute(configuration: &Config, root: &Path, cancelled: bool) -> ScanReport {
         Scan::new()
             .unwrap()
             .execute(
-                &config.jobs,
+                &configuration.jobs,
                 root,
                 Duration::from_secs(10),
                 Arc::new(AtomicBool::new(cancelled)),
@@ -245,7 +247,9 @@ mod tests {
             .unwrap()
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())
             .collect();
+
         names.sort();
+
         names
     }
 
@@ -284,6 +288,7 @@ mod tests {
                 Arc::new(AtomicBool::new(false)),
             )
             .unwrap();
+
         assert!(!report.unsuccessful);
         assert_eq!(manifest(&report.directory)["results"], json!([]));
         assert_eq!(entries(&report.directory), ["manifest.json"]);
@@ -293,22 +298,24 @@ mod tests {
     fn successful_scan_publishes_validated_artifact_hash_and_private_v2_manifest() {
         let temporary = tempfile::tempdir().unwrap();
         let executable = script(temporary.path(), "success", &format!("printf '%s' '{BOM}'"));
-        let config = command_config(&[("packages", &executable)]);
+        let configuration = command_configuration(&[("packages", &executable)]);
         let root = temporary.path().join("output");
 
-        let report = execute(&config, &root, false);
+        let report = execute(&configuration, &root, false);
 
         assert!(!report.unsuccessful);
         assert_eq!(report.directory.parent(), Some(root.as_path()));
         assert_eq!(entries(&root).len(), 2); // Lock and retained run directory.
 
         let document = manifest(&report.directory);
+
         assert_eq!(document["version"], 2);
         assert_eq!(document["bommerVersion"], env!("CARGO_PKG_VERSION"));
         assert_eq!(document["validation"], "json-schema-offline");
         assert_eq!(document["results"].as_array().unwrap().len(), 1);
 
         let result = &document["results"][0];
+
         assert_eq!(result["name"], "host");
         assert_eq!(result["inventory"], "packages");
         assert_eq!(result["scope"], "host");
@@ -329,10 +336,13 @@ mod tests {
             .unwrap();
         }
         assert_eq!(result["artifact"], "host.packages.sbom.cdx.json");
+
         let bytes = fs::read(report.directory.join("host.packages.sbom.cdx.json")).unwrap();
         assert_eq!(bytes, BOM.as_bytes());
         assert_eq!(result["sha256"], hex::encode(Sha256::digest(&bytes)));
+
         let validated = Validator::new().unwrap().validate(&bytes, true).unwrap();
+
         assert_eq!(validated.component_count, 1);
         assert_eq!(validated.version, "1.6");
 
@@ -368,10 +378,10 @@ mod tests {
             ),
         ] {
             let executable = script(temporary.path(), name, &format!("printf '%s' '{fixture}'"));
-            let config = command_config(&[("invalid", &executable)]);
+            let configuration = command_configuration(&[("invalid", &executable)]);
 
             let report = execute(
-                &config,
+                &configuration,
                 &temporary.path().join(format!("output-{name}")),
                 false,
             );
@@ -406,9 +416,9 @@ mod tests {
             "success",
             &format!("printf 'second collector ran\\n' >&2\nprintf '%s' '{BOM}'"),
         );
-        let config = command_config(&[("first", &first), ("second", &second)]);
+        let configuration = command_configuration(&[("first", &first), ("second", &second)]);
 
-        let report = execute(&config, &temporary.path().join("output"), false);
+        let report = execute(&configuration, &temporary.path().join("output"), false);
 
         assert!(report.unsuccessful);
         let document = manifest(&report.directory);
@@ -453,7 +463,7 @@ mod tests {
     fn missing_certificates_retain_a_valid_empty_partial_artifact() {
         let temporary = tempfile::tempdir().unwrap();
         let missing = temporary.path().join("missing-certificates");
-        let config = Config::parse(&json!({
+        let configuration = Config::parse(&json!({
             "version": 1,
             "output": {"directory": "unused-test-output"},
             "host": {"inventories": [{
@@ -462,7 +472,7 @@ mod tests {
             }]},
         }).to_string()).unwrap();
 
-        let report = execute(&config, &temporary.path().join("output"), false);
+        let report = execute(&configuration, &temporary.path().join("output"), false);
 
         assert!(report.unsuccessful);
         let document = manifest(&report.directory);
@@ -506,9 +516,10 @@ mod tests {
                 marker.display(),
             ),
         );
-        let config = command_config(&[("first", &executable), ("second", &executable)]);
+        let configuration =
+            command_configuration(&[("first", &executable), ("second", &executable)]);
 
-        let report = execute(&config, &temporary.path().join("output"), true);
+        let report = execute(&configuration, &temporary.path().join("output"), true);
 
         assert!(report.unsuccessful);
         assert!(!marker.exists());
@@ -547,12 +558,12 @@ mod tests {
             "timeout",
             "printf 'waiting\\n' >&2\nexec sleep 60",
         );
-        let config = command_config(&[("slow", &executable)]);
+        let configuration = command_configuration(&[("slow", &executable)]);
 
         let report = Scan::new()
             .unwrap()
             .execute(
-                &config.jobs,
+                &configuration.jobs,
                 &temporary.path().join("output"),
                 Duration::from_secs(1),
                 Arc::new(AtomicBool::new(false)),
@@ -588,25 +599,28 @@ mod tests {
                 ready.display(),
             ),
         );
-        let config = command_config(&[("active", &executable)]);
+        let configuration = command_configuration(&[("active", &executable)]);
         let scan = Scan::new().unwrap();
         let root = temporary.path().join("output");
         let cancelled = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&cancelled);
 
         let report = std::thread::scope(|scope| {
-            let worker =
-                scope.spawn(|| scan.execute(&config.jobs, &root, Duration::from_secs(20), flag));
+            let worker = scope
+                .spawn(|| scan.execute(&configuration.jobs, &root, Duration::from_secs(20), flag));
 
             let deadline = Instant::now() + Duration::from_secs(10);
             while !ready.exists() && Instant::now() < deadline && !worker.is_finished() {
                 std::thread::sleep(Duration::from_millis(5));
             }
             let was_ready = ready.exists();
+
             // Always stop and join the worker, including when fixture startup failed.
             cancelled.store(true, Ordering::Relaxed);
             let result = worker.join().unwrap().unwrap();
+
             assert!(was_ready, "collector did not signal readiness");
+
             result
         });
 
@@ -636,9 +650,9 @@ mod tests {
             "oversized",
             "printf 'large output\\n' >&2\nhead -c 67108865 /dev/zero",
         );
-        let config = command_config(&[("large", &executable)]);
+        let configuration = command_configuration(&[("large", &executable)]);
 
-        let report = execute(&config, &temporary.path().join("output"), false);
+        let report = execute(&configuration, &temporary.path().join("output"), false);
 
         assert!(report.unsuccessful);
         let document = manifest(&report.directory);
@@ -661,8 +675,8 @@ mod tests {
 
     #[test]
     fn relative_certificate_target_and_dot_path_record_the_effective_absolute_target() {
-        let cwd = std::env::current_dir().unwrap();
-        let temporary = tempfile::tempdir_in(&cwd).unwrap();
+        let working_directory = std::env::current_dir().unwrap();
+        let temporary = tempfile::tempdir_in(&working_directory).unwrap();
         let certificates = temporary.path().join("certificates");
         fs::create_dir(&certificates).unwrap();
         fs::write(
@@ -673,14 +687,14 @@ mod tests {
             )),
         )
         .unwrap();
-        let relative = certificates.strip_prefix(&cwd).unwrap();
-        let config = Config::parse(&json!({
+        let relative = certificates.strip_prefix(&working_directory).unwrap();
+        let configuration = Config::parse(&json!({
             "version": 1, "output": {"directory": "unused"},
             "applications": [{"name": "app", "target": {"type": "directory", "path": relative.join(".")},
                 "cbom": {"enabled": true, "backend": "certificates", "certificates": {"paths": ["."]}}}],
         }).to_string()).unwrap();
 
-        let report = execute(&config, &temporary.path().join("output"), false);
+        let report = execute(&configuration, &temporary.path().join("output"), false);
 
         assert!(!report.unsuccessful);
         let document = manifest(&report.directory);
@@ -727,7 +741,7 @@ mod tests {
         )
         .unwrap();
         let executable = script(temporary.path(), "next", &format!("printf '%s' '{BOM}'"));
-        let next = command_config(&[("next", &executable)]);
+        let next = command_configuration(&[("next", &executable)]);
         let jobs = [certificate_job, next.jobs[0].clone()];
 
         let report = Scan::new()
@@ -809,12 +823,12 @@ mod tests {
         );
         fs::write(target.join(".gitignore"), "ignored.txt\n").unwrap();
         fs::write(target.join("ignored.txt"), "ignored fixture").unwrap();
-        let config = Config::parse(&json!({
+        let configuration = Config::parse(&json!({
             "version": 1, "output": {"directory": "unused"},
             "applications": [{"name": "app", "target": {"type": "directory", "path": target},
                 "sbom": {"enabled": true, "backend": "syft", "exclude": ["manual", "manual"], "respect_gitignore": true}}],
         }).to_string()).unwrap();
-        let job = &config.jobs[0];
+        let job = &configuration.jobs[0];
         let context =
             CollectionContext::new(Duration::from_secs(10), Arc::new(AtomicBool::new(false)));
 
@@ -868,7 +882,7 @@ mod tests {
         "/tests/fixtures/native-import.json"
     ));
 
-    const APP: &str = "/nix/store/00000000000000000000000000000000-app-with-dashes-1.2-bin";
+    const APPLICATION: &str = "/nix/store/00000000000000000000000000000000-app-with-dashes-1.2-bin";
 
     fn context() -> CollectionContext {
         CollectionContext::new(Duration::from_secs(10), Arc::new(AtomicBool::new(false)))
@@ -911,7 +925,7 @@ mod tests {
             },
             None,
             InventoryKind::Sbom,
-            Target::NixClosure(APP.into()),
+            Target::NixClosure(APPLICATION.into()),
             Backend::Nix { roots: vec![] },
         )
         .unwrap()
@@ -1006,9 +1020,9 @@ mod tests {
 
     #[test]
     fn certificate_relative_application_targets_use_working_directory_without_following_links() {
-        let cwd = std::env::current_dir().unwrap();
-        let directory = tempfile::tempdir_in(&cwd).unwrap();
-        let relative = directory.path().strip_prefix(&cwd).unwrap();
+        let working_directory = std::env::current_dir().unwrap();
+        let directory = tempfile::tempdir_in(&working_directory).unwrap();
+        let relative = directory.path().strip_prefix(&working_directory).unwrap();
         fs::write(directory.path().join("cert.pem"), CERTIFICATE).unwrap();
 
         for (target, path) in [
@@ -1061,7 +1075,7 @@ mod tests {
                 serde_json::from_slice(&fs::read(report.directory.join("manifest.json")).unwrap())
                     .unwrap();
             let expected_target = if target == Path::new(".") {
-                cwd.as_path()
+                working_directory.as_path()
             } else {
                 directory.path()
             };

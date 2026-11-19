@@ -31,6 +31,11 @@ struct Frame {
     key: Option<String>,
 }
 
+struct Parser<'a> {
+    bytes: &'a [u8],
+    position: usize,
+}
+
 /// Decode exactly one value, rejecting duplicate decoded keys at every level.
 /// Container parsing is iterative so the depth limit does not depend on stack size.
 pub(crate) fn decode(bytes: &[u8]) -> Result<Value, DecodeError> {
@@ -164,11 +169,6 @@ fn attach(value: Value, frames: &mut [Frame], document: &mut Option<Value>) {
     }
 }
 
-struct Parser<'a> {
-    bytes: &'a [u8],
-    position: usize,
-}
-
 impl Parser<'_> {
     fn whitespace(&mut self) {
         while matches!(
@@ -218,11 +218,13 @@ impl Parser<'_> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::OnceLock;
+
+    use serde_json::json;
 
     use crate::bom::validation::{ValidationError, Validator};
     use crate::json::{DecodeError, decode};
-    use serde_json::json;
-    use std::sync::OnceLock;
+
     fn validator() -> &'static Validator {
         static VALIDATOR: OnceLock<Validator> = OnceLock::new();
 

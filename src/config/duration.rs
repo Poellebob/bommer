@@ -41,7 +41,7 @@ pub(crate) fn parse_duration(text: &str) -> Option<Duration> {
         } else {
             whole.parse::<u64>().ok()?
         };
-        let mut nanos = integral.checked_mul(scale)?;
+        let mut nanoseconds = integral.checked_mul(scale)?;
 
         // Match time.ParseDuration's bounded significand and floating-point scaling.
         let mut numerator = 0_u64;
@@ -57,11 +57,13 @@ pub(crate) fn parse_duration(text: &str) -> Option<Duration> {
             numerator = next;
             divisor *= 10.0;
         }
+
         if numerator > 0 {
-            nanos = nanos.checked_add((numerator as f64 * (scale as f64 / divisor)) as u64)?;
+            nanoseconds =
+                nanoseconds.checked_add((numerator as f64 * (scale as f64 / divisor)) as u64)?;
         }
 
-        total = total.checked_add(nanos)?;
+        total = total.checked_add(nanoseconds)?;
         if total > i64::MAX as u64 {
             return None;
         }
@@ -78,7 +80,7 @@ mod tests {
 
     #[test]
     fn positive_durations_preserve_units_fractions_and_rounding() {
-        for (input, nanos) in [
+        for (input, nanoseconds) in [
             ("1ns", 1),
             ("1us", 1_000),
             ("1\u{00b5}s", 1_000),
@@ -98,7 +100,7 @@ mod tests {
         ] {
             assert_eq!(
                 parse_duration(input),
-                Some(Duration::from_nanos(nanos)),
+                Some(Duration::from_nanos(nanoseconds)),
                 "{input}"
             );
         }

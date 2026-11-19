@@ -142,7 +142,9 @@ mod tests {
             Some(Name::new("pending".into()).unwrap()),
             InventoryKind::Sbom,
             Target::Directory("/".into()),
-            Backend::Command(crate::process::CommandSpec::new("unused".into(), vec![]).unwrap()),
+            Backend::Command(
+                crate::process::CommandSpecification::new("unused".into(), vec![]).unwrap(),
+            ),
         )
         .unwrap()
     }
@@ -152,7 +154,9 @@ mod tests {
             .unwrap()
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())
             .collect();
+
         names.sort();
+
         names
     }
 
@@ -175,9 +179,11 @@ mod tests {
 
         let output = RunOutput::create(&root).unwrap();
         output.checkpoint(&Manifest::new()).unwrap();
+
         let document: Value =
             serde_json::from_slice(&fs::read(output.directory().join("manifest.json")).unwrap())
                 .unwrap();
+
         assert_eq!(document["results"], json!([]));
     }
 
@@ -191,6 +197,7 @@ mod tests {
         let mut old_reader = File::open(output.directory().join("manifest.json")).unwrap();
         let candidate = output.candidate().unwrap();
         let candidate_path = candidate.path().to_owned();
+
         assert!(candidate_path.exists());
         assert!(
             !output
@@ -198,7 +205,9 @@ mod tests {
                 .join("host.pending.sbom.cdx.json")
                 .exists()
         );
+
         drop(candidate);
+
         assert!(!candidate_path.exists());
 
         let mut result = JobResult::pending(&job()).unwrap();
@@ -251,6 +260,7 @@ mod tests {
         let artifact = output.publish(&job, candidate, bytes).unwrap();
         assert_eq!(artifact.name, "host.pending.sbom.cdx.json");
         assert_eq!(artifact.sha256, hex::encode(Sha256::digest(bytes)));
+
         let mut candidate = output.candidate().unwrap();
         candidate.write_all(b"replacement").unwrap();
         let path = candidate.path().to_owned();
@@ -263,6 +273,7 @@ mod tests {
             fs::read(output.directory().join(&artifact.name)).unwrap(),
             bytes
         );
+
         output
             .log(&job)
             .unwrap()
@@ -281,6 +292,7 @@ mod tests {
         let target = temporary.path().join("target");
         fs::write(&target, b"untouched").unwrap();
         symlink(&target, temporary.path().join(".lock")).unwrap();
+
         assert!(matches!(
             RunOutput::create(temporary.path()),
             Err(OutputError::Io(_))

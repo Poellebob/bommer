@@ -43,7 +43,7 @@ mod tests {
     use crate::doctor;
     use crate::process::ProcessError;
 
-    fn command_config(executable: &Path) -> Config {
+    fn command_configuration(executable: &Path) -> Config {
         Config::parse(
             &json!({
                 "version": 1,
@@ -70,9 +70,9 @@ mod tests {
         )
         .unwrap();
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
-        let config = command_config(&executable);
+        let configuration = command_configuration(&executable);
 
-        let report = doctor::check(&config.jobs);
+        let report = doctor::check(&configuration.jobs);
 
         assert!(!report.is_unsuccessful());
         assert_eq!(report.results.len(), 1);
@@ -85,9 +85,9 @@ mod tests {
     fn missing_executable_retains_typed_readiness_error() {
         let temporary = tempfile::tempdir().unwrap();
         let missing = temporary.path().join("missing-collector");
-        let config = command_config(&missing);
+        let configuration = command_configuration(&missing);
 
-        let report = doctor::check(&config.jobs);
+        let report = doctor::check(&configuration.jobs);
 
         assert!(report.is_unsuccessful());
         assert_eq!(report.results.len(), 1);

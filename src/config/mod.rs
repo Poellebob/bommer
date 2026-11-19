@@ -13,7 +13,7 @@ use thiserror::Error;
 use crate::config::document::{Collector, Document, Inventory};
 use crate::config::duration::parse_duration;
 use crate::job::{Backend, InventoryKind, Job, JobError, Name, NameError, Scope, Target};
-use crate::process::CommandSpec;
+use crate::process::CommandSpecification;
 
 #[derive(Debug)]
 pub(crate) struct Config {
@@ -115,63 +115,88 @@ impl Config {
         } else {
             parse_duration(&document.timeout).ok_or(ConfigError::InvalidTimeout)?
         };
-        let mut config = Self {
+        let mut configuration = Self {
             output_directory: document.output.directory.into(),
             timeout,
             jobs: Vec::new(),
             applications: Vec::new(),
         };
 
-        config.add_collector(
+        configuration.add_collector(
             &Scope::Host,
             &Target::Host,
             None,
             InventoryKind::Hbom,
             document.host.hbom,
         )?;
-        config.add_collector(
+        configuration.add_collector(
             &Scope::Host,
             &Target::Host,
             None,
             InventoryKind::Sbom,
             document.host.sbom,
         )?;
-        config.add_inventories(&Scope::Host, &Target::Host, document.host.inventories)?;
+        configuration.add_inventories(&Scope::Host, &Target::Host, document.host.inventories)?;
 
         let mut seen = HashSet::from([String::from("host")]);
-        for app in document.applications {
-            let name = checked_name(&app.name, "applications")?;
-            if !seen.insert(app.name.clone()) {
+        for application in document.applications {
+            let name = checked_name(&application.name, "applications")?;
+            if !seen.insert(application.name.clone()) {
                 return Err(ConfigError::DuplicateName {
                     scope: "applications".into(),
-                    name: app.name,
+                    name: application.name,
                 });
             }
 
-            let target = match app.target.kind.as_str() {
-                "directory" if !app.target.path.is_empty() && app.target.image.is_empty() => {
-                    Target::Directory(app.target.path.into())
+            let target = match application.target.kind.as_str() {
+                "directory"
+                    if !application.target.path.is_empty()
+                        && application.target.image.is_empty() =>
+                {
+                    Target::Directory(application.target.path.into())
                 }
-                "nix-closure" if !app.target.path.is_empty() && app.target.image.is_empty() => {
-                    Target::NixClosure(app.target.path.into())
+                "nix-closure"
+                    if !application.target.path.is_empty()
+                        && application.target.image.is_empty() =>
+                {
+                    Target::NixClosure(application.target.path.into())
                 }
-                "container" if !app.target.image.is_empty() && app.target.path.is_empty() => {
-                    Target::RegistryImage(app.target.image)
+                "container"
+                    if !application.target.image.is_empty()
+                        && application.target.path.is_empty() =>
+                {
+                    Target::RegistryImage(application.target.image)
                 }
-                _ => return Err(ConfigError::InvalidTarget { name: app.name }),
+                _ => {
+                    return Err(ConfigError::InvalidTarget {
+                        name: application.name,
+                    });
+                }
             };
 
-            config.applications.push(name.clone());
+            configuration.applications.push(name.clone());
             let scope = Scope::Application {
                 name,
-                version: (!app.version.is_empty()).then_some(app.version),
+                version: (!application.version.is_empty()).then_some(application.version),
             };
-            config.add_collector(&scope, &target, None, InventoryKind::Sbom, app.sbom)?;
-            config.add_collector(&scope, &target, None, InventoryKind::Cbom, app.cbom)?;
-            config.add_inventories(&scope, &target, app.inventories)?;
+            configuration.add_collector(
+                &scope,
+                &target,
+                None,
+                InventoryKind::Sbom,
+                application.sbom,
+            )?;
+            configuration.add_collector(
+                &scope,
+                &target,
+                None,
+                InventoryKind::Cbom,
+                application.cbom,
+            )?;
+            configuration.add_inventories(&scope, &target, application.inventories)?;
         }
 
-        Ok(config)
+        Ok(configuration)
     }
 
     fn add_inventories(
@@ -249,14 +274,14 @@ impl Config {
                 respect_gitignore: collector.respect_gitignore,
             },
             "command" => {
-                let mut args = collector.command.into_iter().map(OsString::from);
-                let executable = args
+                let mut arguments = collector.command.into_iter().map(OsString::from);
+                let executable = arguments
                     .next()
                     .ok_or_else(|| invalid(CollectorError::InvalidOptions))?;
-                let spec = CommandSpec::new(executable, args.collect())
+                let specification = CommandSpecification::new(executable, arguments.collect())
                     .map_err(|_| invalid(CollectorError::InvalidOptions))?;
 
-                Backend::Command(spec)
+                Backend::Command(specification)
             }
             "nix" => Backend::Nix {
                 roots: collector.nix.unwrap_or_default().roots,
@@ -320,13 +345,16 @@ mod tests {
 
     #[test]
     fn configuration_defaults_and_explicit_duration() {
-        let config = Config::parse(BASE).unwrap();
+        let configuration = Config::parse(BASE).unwrap();
 
-        assert_eq!(config.output_directory, Path::new("/tmp/inventories"));
-        assert_eq!(config.timeout, Duration::from_secs(600));
-        assert!(config.jobs.is_empty());
+        assert_eq!(
+            configuration.output_directory,
+            Path::new("/tmp/inventories")
+        );
+        assert_eq!(configuration.timeout, Duration::from_secs(600));
+        assert!(configuration.jobs.is_empty());
 
-        for (input, nanos) in [
+        for (input, nanoseconds) in [
             ("1h2m3.004005006s", 3_723_004_005_006),
             ("+.5s", 500_000_000),
             ("1.s", 1_000_000_000),
@@ -335,8 +363,13 @@ mod tests {
             ("0.9999999999999999999ns", 1),
             ("2562047h47m16.854775807s", i64::MAX as u64),
         ] {
-            let config = Config::parse(&format!("{BASE}timeout: '{input}'\n")).unwrap();
-            assert_eq!(config.timeout, Duration::from_nanos(nanos), "{input}");
+            let configuration = Config::parse(&format!("{BASE}timeout: '{input}'\n")).unwrap();
+
+            assert_eq!(
+                configuration.timeout,
+                Duration::from_nanos(nanoseconds),
+                "{input}"
+            );
         }
 
         for input in [
@@ -455,10 +488,10 @@ mod tests {
 
     #[test]
     fn null_fields_have_go_zero_value_behavior() {
-        let config = Config::parse(&format!("{BASE}timeout: null\nhost: {{hbom: null, sbom: {{enabled: null, command: null}}, inventories: null}}\napplications: null\n")).unwrap();
+        let configuration = Config::parse(&format!("{BASE}timeout: null\nhost: {{hbom: null, sbom: {{enabled: null, command: null}}, inventories: null}}\napplications: null\n")).unwrap();
 
-        assert_eq!(config.timeout, Duration::from_secs(600));
-        assert!(config.jobs.is_empty());
+        assert_eq!(configuration.timeout, Duration::from_secs(600));
+        assert!(configuration.jobs.is_empty());
     }
 
     #[test]
@@ -475,14 +508,14 @@ mod tests {
         }
 
         for names in ["host", "api, api"] {
-            let apps = names
+            let applications = names
                 .split(", ")
                 .map(|name| format!("{{name: {name}, target: {{type: directory, path: /app}}}}"))
                 .collect::<Vec<_>>()
                 .join(", ");
 
             assert!(matches!(
-                Config::parse(&format!("{BASE}applications: [{apps}]\n")),
+                Config::parse(&format!("{BASE}applications: [{applications}]\n")),
                 Err(ConfigError::DuplicateName { .. })
             ));
         }
@@ -520,9 +553,9 @@ mod tests {
 
     #[test]
     fn disabled_collectors_preserve_go_validation_behavior() {
-        let config = Config::parse(&format!("{BASE}host:\n  inventories:\n    - name: off\n      kind: cbom\n      collector:\n        backend: unknown\n        certificates: {{paths: [''], max_file_bytes: -1}}\n        nix: {{roots: [relative]}}\n        import: {{path: ''}}\n")).unwrap();
+        let configuration = Config::parse(&format!("{BASE}host:\n  inventories:\n    - name: off\n      kind: cbom\n      collector:\n        backend: unknown\n        certificates: {{paths: [''], max_file_bytes: -1}}\n        nix: {{roots: [relative]}}\n        import: {{path: ''}}\n")).unwrap();
 
-        assert!(config.jobs.is_empty());
+        assert!(configuration.jobs.is_empty());
     }
 
     #[test]
@@ -711,12 +744,12 @@ mod tests {
 
             match expected {
                 Some(expected) => {
-                    let config = result.unwrap();
+                    let configuration = result.unwrap();
                     let Backend::Certificates {
                         max_file_bytes,
                         include_identity,
                         ..
-                    } = &config.jobs[0].backend
+                    } = &configuration.jobs[0].backend
                     else {
                         panic!("expected certificates");
                     };

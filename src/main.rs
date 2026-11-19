@@ -35,7 +35,7 @@ use clap::{Parser, Subcommand, ValueEnum};
         "  bommer version"
     )
 )]
-pub(crate) struct Args {
+pub(crate) struct Arguments {
     #[command(subcommand)]
     command: Command,
 }
@@ -55,8 +55,13 @@ pub(crate) enum Command {
 #[derive(Debug, PartialEq, Eq, clap::Args)]
 pub(crate) struct Options {
     /// Path to the inventory configuration.
-    #[arg(long, default_value = "/etc/bommer/config.yaml")]
-    config: PathBuf,
+    #[arg(
+        id = "config",
+        long = "config",
+        value_name = "CONFIG",
+        default_value = "/etc/bommer/config.yaml"
+    )]
+    configuration: PathBuf,
 
     /// Collect or check only this inventory kind.
     #[arg(long, value_enum)]
@@ -91,7 +96,7 @@ enum CliError {
 
 impl Options {
     fn load_plan(self) -> Result<(config::Config, plan::Plan), CliError> {
-        let config = config::Config::load(&self.config)?;
+        let configuration = config::Config::load(&self.configuration)?;
 
         let kind = self.only.map(|kind| match kind {
             InventoryFilter::Hbom => job::InventoryKind::Hbom,
@@ -99,9 +104,9 @@ impl Options {
             InventoryFilter::Cbom => job::InventoryKind::Cbom,
         });
         let application = self.application.map(job::Name::new).transpose()?;
-        let plan = plan::Plan::build(&config, &plan::Selection { kind, application })?;
+        let plan = plan::Plan::build(&configuration, &plan::Selection { kind, application })?;
 
-        Ok((config, plan))
+        Ok((configuration, plan))
     }
 }
 
@@ -121,10 +126,14 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<ExitCode, CliError> {
-    match Args::parse().command {
+    match Arguments::parse().command {
         Command::Scan(options) => {
-            let (config, plan) = options.load_plan()?;
-            let report = scan::run(&plan.jobs, &config.output_directory, config.timeout)?;
+            let (configuration, plan) = options.load_plan()?;
+            let report = scan::run(
+                &plan.jobs,
+                &configuration.output_directory,
+                configuration.timeout,
+            )?;
 
             println!("{}", report.directory.display());
 
@@ -132,7 +141,7 @@ fn run() -> Result<ExitCode, CliError> {
         }
 
         Command::Doctor(options) => {
-            let (_config, plan) = options.load_plan()?;
+            let (_configuration, plan) = options.load_plan()?;
             let report = doctor::check(&plan.jobs);
 
             for readiness in &report.results {
@@ -169,10 +178,10 @@ mod tests {
 
     use clap::Parser;
 
-    use crate::{Args, Command, InventoryFilter};
+    use crate::{Arguments, Command, InventoryFilter};
 
-    fn parse(input: &[&str]) -> Result<Args, clap::Error> {
-        Args::try_parse_from(
+    fn parse(input: &[&str]) -> Result<Arguments, clap::Error> {
+        Arguments::try_parse_from(
             std::iter::once(OsString::from("bommer")).chain(input.iter().map(OsString::from)),
         )
     }
@@ -180,16 +189,22 @@ mod tests {
     #[test]
     fn cli_defaults_and_explicit_selectors() {
         for (command, expect_doctor) in [("scan", false), ("doctor", true)] {
-            let args = parse(&[command]).unwrap();
+            let arguments = parse(&[command]).unwrap();
 
-            match &args.command {
+            match &arguments.command {
                 Command::Scan(options) if !expect_doctor => {
-                    assert_eq!(options.config, PathBuf::from("/etc/bommer/config.yaml"));
+                    assert_eq!(
+                        options.configuration,
+                        PathBuf::from("/etc/bommer/config.yaml")
+                    );
                     assert_eq!(options.only, None);
                     assert_eq!(options.application, None);
                 }
                 Command::Doctor(options) if expect_doctor => {
-                    assert_eq!(options.config, PathBuf::from("/etc/bommer/config.yaml"));
+                    assert_eq!(
+                        options.configuration,
+                        PathBuf::from("/etc/bommer/config.yaml")
+                    );
                     assert_eq!(options.only, None);
                     assert_eq!(options.application, None);
                 }
@@ -197,7 +212,7 @@ mod tests {
             }
         }
 
-        let args = parse(&[
+        let arguments = parse(&[
             "scan",
             "--config",
             "local.yaml",
@@ -208,29 +223,29 @@ mod tests {
         ])
         .unwrap();
 
-        match &args.command {
+        match &arguments.command {
             Command::Scan(options) => {
-                assert_eq!(options.config, PathBuf::from("local.yaml"));
+                assert_eq!(options.configuration, PathBuf::from("local.yaml"));
                 assert_eq!(options.only, Some(InventoryFilter::Cbom));
                 assert_eq!(options.application.as_deref(), Some("api"));
             }
             other => panic!("unexpected command: {other:?}"),
         }
 
-        let args = parse(&["doctor", "--only=sbom", "--config=other.yaml"]).unwrap();
+        let arguments = parse(&["doctor", "--only=sbom", "--config=other.yaml"]).unwrap();
 
-        match &args.command {
+        match &arguments.command {
             Command::Doctor(options) => {
-                assert_eq!(options.config, PathBuf::from("other.yaml"));
+                assert_eq!(options.configuration, PathBuf::from("other.yaml"));
                 assert_eq!(options.only, Some(InventoryFilter::Sbom));
                 assert_eq!(options.application, None);
             }
             other => panic!("unexpected command: {other:?}"),
         }
 
-        let args = parse(&["scan", "--only", "hbom"]).unwrap();
+        let arguments = parse(&["scan", "--only", "hbom"]).unwrap();
 
-        match &args.command {
+        match &arguments.command {
             Command::Scan(options) => {
                 assert_eq!(options.only, Some(InventoryFilter::Hbom));
             }
@@ -260,7 +275,7 @@ mod tests {
 
         assert!(matches!(
             parse(&["version"]).unwrap(),
-            Args {
+            Arguments {
                 command: Command::Version
             }
         ));
@@ -286,12 +301,12 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn config_paths_preserve_non_unicode_bytes() {
+    fn configuration_paths_preserve_non_unicode_bytes() {
         use std::os::unix::ffi::OsStringExt;
 
         let path = OsString::from_vec(vec![b'/', b't', b'm', b'p', b'/', 0xff]);
 
-        let args = Args::try_parse_from([
+        let arguments = Arguments::try_parse_from([
             OsString::from("bommer"),
             OsString::from("scan"),
             OsString::from("--config"),
@@ -299,8 +314,8 @@ mod tests {
         ])
         .unwrap();
 
-        match args.command {
-            Command::Scan(options) => assert_eq!(options.config, path),
+        match arguments.command {
+            Command::Scan(options) => assert_eq!(options.configuration, path),
             other => panic!("unexpected command: {other:?}"),
         }
     }

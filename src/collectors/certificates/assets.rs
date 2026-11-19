@@ -51,12 +51,12 @@ fn signature_name(identifier: &AlgorithmIdentifier<'_>) -> &'static str {
             else {
                 return "0";
             };
-            let Ok(mask) = parameters.mask_gen_algorithm() else {
+            let Ok(mask_generation_algorithm) = parameters.mask_gen_algorithm() else {
                 return "0";
             };
             if parameters.trailer_field() != 1
-                || mask.hash != *parameters.hash_algorithm_oid()
-                || mask.mgf.to_id_string() != "1.2.840.113549.1.1.8"
+                || mask_generation_algorithm.hash != *parameters.hash_algorithm_oid()
+                || mask_generation_algorithm.mgf.to_id_string() != "1.2.840.113549.1.1.8"
             {
                 return "0";
             }
@@ -88,29 +88,29 @@ pub(in crate::collectors::certificates) fn build(
         let (_, certificate) =
             parse_x509_certificate(&observation.der).map_err(|_| CertificateError::Options)?;
 
-        let key = certificate.public_key();
+        let public_key = certificate.public_key();
         let mut key_properties = json!({"primitive":"unknown"});
-        let key_name = match key.parsed() {
+        let key_name = match public_key.parsed() {
             Ok(PublicKey::RSA(rsa)) => {
                 let modulus = rsa
                     .modulus
                     .iter()
                     .position(|byte| *byte != 0)
                     .map_or(&[][..], |start| &rsa.modulus[start..]);
-                let bits = modulus
+                let modulus_bits = modulus
                     .first()
                     .map_or(0, |byte| modulus.len() * 8 - byte.leading_zeros() as usize);
-                key_properties["parameterSetIdentifier"] = bits.to_string().into();
-                format!("RSA-{bits}")
+                key_properties["parameterSetIdentifier"] = modulus_bits.to_string().into();
+                format!("RSA-{modulus_bits}")
             }
             Ok(PublicKey::EC(_)) => {
-                let oid = key
+                let curve_oid = public_key
                     .algorithm
                     .parameters
                     .as_ref()
                     .and_then(|parameters| parameters.as_oid().ok())
                     .map(|oid| oid.to_id_string());
-                let curve = match oid.as_deref() {
+                let curve = match curve_oid.as_deref() {
                     Some("1.2.840.10045.3.1.7") => "P-256",
                     Some("1.3.132.0.34") => "P-384",
                     Some("1.3.132.0.35") => "P-521",
@@ -120,7 +120,7 @@ pub(in crate::collectors::certificates) fn build(
                 key_properties = json!({"primitive":"signature","curve":curve});
                 format!("ECDSA-{curve}")
             }
-            _ if key.algorithm.algorithm.to_id_string() == "1.3.101.112" => {
+            _ if public_key.algorithm.algorithm.to_id_string() == "1.3.101.112" => {
                 key_properties = json!({"primitive":"signature","curve":"Ed25519"});
                 "Ed25519".into()
             }
@@ -159,6 +159,7 @@ pub(in crate::collectors::certificates) fn build(
         sources.insert(reference.clone(), source_paths);
         components.insert(reference.clone(), json!({"type":"cryptographic-asset","bom-ref":reference,"name":format!("X.509 SHA-256 {digest}"),"cryptoProperties":{"assetType":"certificate","certificateProperties":certificate_properties},"properties":properties}));
     }
+
     components.extend(algorithms);
 
     Ok(Assets {

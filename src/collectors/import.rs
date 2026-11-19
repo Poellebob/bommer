@@ -69,11 +69,12 @@ pub(crate) fn collect(
     let mut buffer = [0; 64 << 10];
     loop {
         context.check()?;
-        let count = file.read(&mut buffer)?;
-        if count == 0 {
+        let bytes_read = file.read(&mut buffer)?;
+        if bytes_read == 0 {
             break;
         }
-        data.extend_from_slice(&buffer[..count]);
+
+        data.extend_from_slice(&buffer[..bytes_read]);
         if data.len() as u64 > LIMIT {
             return Err(ImportError::LimitExceeded);
         }
@@ -85,9 +86,9 @@ pub(crate) fn collect(
         return Err(ImportError::InvalidJson);
     }
 
-    let mut pending = vec![&document];
+    let mut pending_values = vec![&document];
     let mut findings = 0;
-    while let Some(value) = pending.pop() {
+    while let Some(value) = pending_values.pop() {
         context.check()?;
         match value {
             Value::String(value) if value.contains("PRIVATE KEY-----") => {
@@ -104,17 +105,18 @@ pub(crate) fn collect(
                 {
                     return Err(ImportError::PrivateMaterial);
                 }
-                pending.extend(object.values());
+                pending_values.extend(object.values());
             }
-            Value::Array(values) => pending.extend(values),
+            Value::Array(values) => pending_values.extend(values),
             _ => {}
         }
     }
+
     if findings == 0
         && document
             .get("components")
             .and_then(Value::as_array)
-            .is_some_and(|items| !items.is_empty())
+            .is_some_and(|components| !components.is_empty())
     {
         return Err(ImportError::NoCryptographicAssets);
     }
@@ -175,10 +177,10 @@ mod tests {
         let path = directory.path().join("deep.json");
         let validator = Validator::new().unwrap();
 
-        for spec in ["1.6", "1.7"] {
+        for specification_version in ["1.6", "1.7"] {
             // Seventy component ancestors put this valid CBOM beyond 128 JSON levels.
             let input = format!(
-                " \n{{\"bomFormat\":\"CycloneDX\",\"specVersion\":\"{spec}\",\"version\":1,\"components\":[{}{}{}]}}\t\n",
+                " \n{{\"bomFormat\":\"CycloneDX\",\"specVersion\":\"{specification_version}\",\"version\":1,\"components\":[{}{}{}]}}\t\n",
                 r#"{"type":"cryptographic-asset","name":"ancestor","components":["#.repeat(70),
                 r#"{"type":"cryptographic-asset","name":"leaf"}"#,
                 "]}".repeat(70),
@@ -195,7 +197,7 @@ mod tests {
             assert_eq!(fs::read(&path).unwrap(), input.as_bytes());
 
             let summary = validator.validate(&output, true).unwrap();
-            assert_eq!(summary.version, spec);
+            assert_eq!(summary.version, specification_version);
             assert_eq!(summary.component_count, 71);
         }
     }

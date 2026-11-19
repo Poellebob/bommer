@@ -36,7 +36,7 @@ pub(crate) enum NixError {
 }
 
 #[derive(Deserialize)]
-struct PathInfo {
+struct PathMetadata {
     #[serde(default, deserialize_with = "optional_string")]
     path: String,
     #[serde(rename = "narHash")]
@@ -53,6 +53,7 @@ fn store_path(path: &str) -> bool {
     let Some(name) = path.strip_prefix("/nix/store/") else {
         return false;
     };
+
     name.len() > 33
         && name.as_bytes()[32] == b'-'
         && name.as_bytes()[..32]
@@ -71,28 +72,28 @@ fn roots(job: &Job) -> Result<(Vec<PathBuf>, Vec<String>), NixError> {
     let Backend::Nix { roots } = &job.backend else {
         return Err(NixError::Options);
     };
-    let configured = if roots.is_empty() {
+    let configured_roots = if roots.is_empty() {
         vec![job.target.path().ok_or(NixError::Options)?.to_path_buf()]
     } else {
         roots.clone()
     };
 
-    let mut resolved = BTreeSet::new();
-    for path in &configured {
-        let canonical = path
+    let mut resolved_roots = BTreeSet::new();
+    for path in &configured_roots {
+        let canonical_path = path
             .canonicalize()
             .map_err(|_| NixError::InvalidRoot { path: path.clone() })?;
-        let metadata = canonical.metadata()?;
-        let text = canonical
+        let metadata = canonical_path.metadata()?;
+        let canonical_path_text = canonical_path
             .to_str()
             .ok_or_else(|| NixError::InvalidRoot { path: path.clone() })?;
-        if !is_output(text) || (!metadata.is_file() && !metadata.is_dir()) {
+        if !is_output(canonical_path_text) || (!metadata.is_file() && !metadata.is_dir()) {
             return Err(NixError::InvalidRoot { path: path.clone() });
         }
-        resolved.insert(text.to_owned());
+        resolved_roots.insert(canonical_path_text.to_owned());
     }
 
-    Ok((configured, resolved.into_iter().collect()))
+    Ok((configured_roots, resolved_roots.into_iter().collect()))
 }
 
 pub(crate) fn check(job: &Job) -> Result<(), NixError> {
@@ -132,7 +133,7 @@ fn valid_hash(hash: &str) -> bool {
     false
 }
 
-fn decode(data: &[u8]) -> Result<BTreeMap<String, PathInfo>, NixError> {
+fn decode(data: &[u8]) -> Result<BTreeMap<String, PathMetadata>, NixError> {
     let value: Value = serde_json::from_slice(data).map_err(|_| NixError::InvalidMetadata)?;
     let mut entries = BTreeMap::new();
     match value {
@@ -140,16 +141,16 @@ fn decode(data: &[u8]) -> Result<BTreeMap<String, PathInfo>, NixError> {
             for (path, value) in values {
                 entries.insert(
                     path,
-                    serde_json::from_value::<PathInfo>(value)
+                    serde_json::from_value::<PathMetadata>(value)
                         .map_err(|_| NixError::InvalidMetadata)?,
                 );
             }
         }
         Value::Array(values) => {
             for value in values {
-                let info: PathInfo =
+                let metadata: PathMetadata =
                     serde_json::from_value(value).map_err(|_| NixError::InvalidMetadata)?;
-                if entries.insert(info.path.clone(), info).is_some() {
+                if entries.insert(metadata.path.clone(), metadata).is_some() {
                     return Err(NixError::InvalidMetadata);
                 }
             }
@@ -160,19 +161,20 @@ fn decode(data: &[u8]) -> Result<BTreeMap<String, PathInfo>, NixError> {
     if entries.is_empty() {
         return Err(NixError::InvalidMetadata);
     }
-    for (path, info) in &entries {
+
+    for (path, metadata) in &entries {
         if !is_output(path)
-            || (!info.path.is_empty() && info.path != *path)
-            || info.version.is_some_and(|version| version != 1)
-            || !valid_hash(&info.nar_hash)
-            || (!info.deriver.is_empty()
-                && info.deriver != "unknown-deriver"
-                && !(store_path(&info.deriver) && info.deriver.ends_with(".drv")))
+            || (!metadata.path.is_empty() && metadata.path != *path)
+            || metadata.version.is_some_and(|version| version != 1)
+            || !valid_hash(&metadata.nar_hash)
+            || (!metadata.deriver.is_empty()
+                && metadata.deriver != "unknown-deriver"
+                && !(store_path(&metadata.deriver) && metadata.deriver.ends_with(".drv")))
         {
             return Err(NixError::InvalidMetadata);
         }
 
-        for reference in &info.references {
+        for reference in &metadata.references {
             if !entries.contains_key(reference) {
                 return Err(NixError::IncompleteClosure {
                     missing: reference.into(),
@@ -190,12 +192,12 @@ pub(crate) fn collect(
     output: &mut dyn Write,
 ) -> Result<CollectionOutcome, NixError> {
     context.check()?;
-    let (configured, roots) = roots(job)?;
+    let (configured_roots, roots) = roots(job)?;
     let executable = Process::find_executable(OsStr::new("nix"))?;
-    let run = |args: &[OsString]| {
+    let run = |arguments: &[OsString]| {
         Process::capture(
             executable.as_os_str(),
-            args,
+            arguments,
             context.deadline,
             &context.cancelled,
             64 << 20,
@@ -207,11 +209,11 @@ pub(crate) fn collect(
     let version = std::str::from_utf8(&version_output.stdout)
         .map_err(|_| NixError::InvalidVersion)?
         .trim();
-    let (args, store) = query_arguments(version, &roots)?;
-    let captured = run(&args)?;
+    let (arguments, store) = query_arguments(version, &roots)?;
+    let metadata_output = run(&arguments)?;
 
     context.check()?;
-    let (document, findings) = closure_document(&captured.stdout, &roots, job, version)?;
+    let (document, findings) = closure_document(&metadata_output.stdout, &roots, job, version)?;
 
     context.check()?;
     document.write(output)?;
@@ -220,7 +222,7 @@ pub(crate) fn collect(
         findings,
         Coverage::DeclaredScope,
         vec![],
-        json!({"scope":"store-reference closure","storeDirectory":"/nix/store","configuredRoots":configured.iter().map(|path| crate::path_encoding::path_text(path)).collect::<Vec<_>>(),"resolvedRoots":roots,"nixVersion":version,"storeConnection":store}),
+        json!({"scope":"store-reference closure","storeDirectory":"/nix/store","configuredRoots":configured_roots.iter().map(|path| crate::path_encoding::path_text(path)).collect::<Vec<_>>(),"resolvedRoots":roots,"nixVersion":version,"storeConnection":store}),
         Some(version.into()),
     ))
 }
@@ -229,17 +231,23 @@ pub(crate) fn query_arguments(
     version: &str,
     roots: &[String],
 ) -> Result<(Vec<OsString>, &'static str), NixError> {
-    let numbers = version
+    let version_numbers = version
         .strip_prefix("nix (Nix) ")
         .ok_or(NixError::InvalidVersion)?;
-    if numbers.contains(['\r', '\n']) {
+    if version_numbers.contains(['\r', '\n']) {
         return Err(NixError::InvalidVersion);
     }
-    let (major, rest) = numbers.split_once('.').ok_or(NixError::InvalidVersion)?;
+
+    let (major, remaining_version) = version_numbers
+        .split_once('.')
+        .ok_or(NixError::InvalidVersion)?;
     if major.is_empty() || !major.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(NixError::InvalidVersion);
     }
-    let minor: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    let minor: String = remaining_version
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
     let (major, minor) = (
         major.parse::<u64>().map_err(|_| NixError::InvalidVersion)?,
         minor.parse::<u64>().map_err(|_| NixError::InvalidVersion)?,
@@ -253,7 +261,7 @@ pub(crate) fn query_arguments(
     } else {
         "local"
     };
-    let mut args: Vec<OsString> = [
+    let mut arguments: Vec<OsString> = [
         "--extra-experimental-features",
         "nix-command",
         "path-info",
@@ -267,11 +275,11 @@ pub(crate) fn query_arguments(
     .map(Into::into)
     .collect();
     if major > 2 || (major == 2 && minor >= 34) {
-        args.extend(["--json-format".into(), "1".into()]);
+        arguments.extend(["--json-format".into(), "1".into()]);
     }
-    args.extend(roots.iter().map(Into::into));
+    arguments.extend(roots.iter().map(Into::into));
 
-    Ok((args, store))
+    Ok((arguments, store))
 }
 
 pub(crate) fn closure_document(
@@ -291,19 +299,19 @@ pub(crate) fn closure_document(
 
     let mut components = Vec::new();
     let mut dependencies = Vec::new();
-    for (path, info) in &entries {
+    for (path, metadata) in &entries {
         let mut properties = vec![
             json!({"name":"bommer:nix:store-path","value":path}),
-            json!({"name":"bommer:nix:nar-hash","value":info.nar_hash}),
-            json!({"name":"bommer:nix:nar-size","value":info.nar_size.to_string()}),
+            json!({"name":"bommer:nix:nar-hash","value":metadata.nar_hash}),
+            json!({"name":"bommer:nix:nar-size","value":metadata.nar_size.to_string()}),
         ];
-        if !info.deriver.is_empty() && info.deriver != "unknown-deriver" {
-            properties.push(json!({"name":"bommer:nix:deriver","value":info.deriver}));
+        if !metadata.deriver.is_empty() && metadata.deriver != "unknown-deriver" {
+            properties.push(json!({"name":"bommer:nix:deriver","value":metadata.deriver}));
         }
         components.push(
             json!({"type":"file", "bom-ref":path, "name":&path[44..], "properties":properties}),
         );
-        let references: BTreeSet<_> = info.references.iter().collect();
+        let references: BTreeSet<_> = metadata.references.iter().collect();
         dependencies.push(json!({"ref":path,"dependsOn":references}));
     }
 
@@ -329,7 +337,6 @@ pub(crate) fn closure_document(
 
 #[cfg(test)]
 mod tests {
-
     use crate::bom::validation::Validator;
     use crate::collection::context::CollectionContext;
     use crate::collectors::nix;
@@ -338,8 +345,9 @@ mod tests {
     use std::path::Path;
     use std::sync::{Arc, atomic::AtomicBool};
     use std::time::Duration;
-    const APP: &str = "/nix/store/00000000000000000000000000000000-app-with-dashes-1.2-bin";
-    const LIB: &str = "/nix/store/11111111111111111111111111111111-library-2-dev";
+
+    const APPLICATION: &str = "/nix/store/00000000000000000000000000000000-app-with-dashes-1.2-bin";
+    const LIBRARY: &str = "/nix/store/11111111111111111111111111111111-library-2-dev";
 
     fn context() -> CollectionContext {
         CollectionContext::new(Duration::from_secs(10), Arc::new(AtomicBool::new(false)))
@@ -353,7 +361,7 @@ mod tests {
             },
             None,
             InventoryKind::Sbom,
-            Target::NixClosure(APP.into()),
+            Target::NixClosure(APPLICATION.into()),
             Backend::Nix { roots: vec![] },
         )
         .unwrap()
@@ -362,14 +370,14 @@ mod tests {
     #[test]
     fn nix_current_and_legacy_metadata_preserve_graph_and_nar_semantics() {
         let hash = "sha256-7bO3fpkymZrnfW2Z6uxcYwBALxPVrZ9msGQrTG1MNZo=";
-        let current = json!({APP:{"narHash":hash,"narSize":96,"references":[LIB,APP,LIB],"version":1},LIB:{"narHash":hash,"narSize":205456,"references":[],"version":1}});
-        let legacy = json!([{"path":LIB,"narHash":hash,"narSize":205456,"references":[]},{"path":APP,"narHash":hash,"narSize":96,"references":[APP,LIB]}]);
+        let current = json!({APPLICATION:{"narHash":hash,"narSize":96,"references":[LIBRARY,APPLICATION,LIBRARY],"version":1},LIBRARY:{"narHash":hash,"narSize":205456,"references":[],"version":1}});
+        let legacy = json!([{"path":LIBRARY,"narHash":hash,"narSize":205456,"references":[]},{"path":APPLICATION,"narHash":hash,"narSize":96,"references":[APPLICATION,LIBRARY]}]);
         let mut results = Vec::new();
 
         for metadata in [current, legacy] {
             let (document, findings) = nix::closure_document(
                 &serde_json::to_vec(&metadata).unwrap(),
-                &[APP.into()],
+                &[APPLICATION.into()],
                 &nix_job(),
                 "nix (Nix) 2.34.8",
             )
@@ -388,7 +396,7 @@ mod tests {
             );
             assert_eq!(
                 document["dependencies"],
-                json!([{"ref":APP,"dependsOn":[APP,LIB]},{"ref":LIB,"dependsOn":[]},{"ref":"bommer:inventory:app.sbom","dependsOn":[APP]}])
+                json!([{"ref":APPLICATION,"dependsOn":[APPLICATION,LIBRARY]},{"ref":LIBRARY,"dependsOn":[]},{"ref":"bommer:inventory:app.sbom","dependsOn":[APPLICATION]}])
             );
 
             let component = &document["components"][0];
@@ -417,7 +425,7 @@ mod tests {
             ("nix (Nix) 3.0pre", true),
         ] {
             let (arguments, store) =
-                nix::query_arguments(version, &[APP.into(), LIB.into()]).unwrap();
+                nix::query_arguments(version, &[APPLICATION.into(), LIBRARY.into()]).unwrap();
 
             assert!(matches!(
                 store,
@@ -439,7 +447,7 @@ mod tests {
             if format_flag {
                 expected.extend(["--json-format".into(), "1".into()]);
             }
-            expected.extend([APP.into(), LIB.into()]);
+            expected.extend([APPLICATION.into(), LIBRARY.into()]);
             assert_eq!(arguments, expected);
         }
 
@@ -451,7 +459,7 @@ mod tests {
             "nix (Nix) 2.34\ninjected",
         ] {
             assert!(matches!(
-                nix::query_arguments(version, &[APP.into()]),
+                nix::query_arguments(version, &[APPLICATION.into()]),
                 Err(nix::NixError::InvalidVersion)
             ));
         }
@@ -459,7 +467,7 @@ mod tests {
 
     #[test]
     fn nix_rejects_missing_roots_and_incomplete_or_malformed_metadata() {
-        let valid = json!({"narHash":"sha256:0000000000000000000000000000000000000000000000000000","narSize":0,"references":[]});
+        let valid_metadata = json!({"narHash":"sha256:0000000000000000000000000000000000000000000000000000","narSize":0,"references":[]});
 
         for (field, replacement) in [
             ("narHash", json!("sha256-invalid")),
@@ -469,24 +477,24 @@ mod tests {
             ("version", json!(2)),
             ("deriver", json!("invalid")),
         ] {
-            let mut info = valid.clone();
-            info[field] = replacement;
-            let data = serde_json::to_vec(&json!({APP:info})).unwrap();
+            let mut metadata = valid_metadata.clone();
+            metadata[field] = replacement;
+            let data = serde_json::to_vec(&json!({APPLICATION:metadata})).unwrap();
 
             assert!(matches!(
-                nix::closure_document(&data, &[APP.into()], &nix_job(), "nix (Nix) 2.34.8"),
+                nix::closure_document(&data, &[APPLICATION.into()], &nix_job(), "nix (Nix) 2.34.8"),
                 Err(nix::NixError::InvalidMetadata)
             ));
         }
 
-        let mut incomplete = valid.clone();
-        incomplete["references"] = json!([LIB]);
+        let mut incomplete_metadata = valid_metadata.clone();
+        incomplete_metadata["references"] = json!([LIBRARY]);
 
         assert!(
-            matches!(nix::closure_document(&serde_json::to_vec(&json!({APP:incomplete})).unwrap(), &[APP.into()], &nix_job(), "nix (Nix) 2.34.8"), Err(nix::NixError::IncompleteClosure { missing }) if missing == Path::new(LIB))
+            matches!(nix::closure_document(&serde_json::to_vec(&json!({APPLICATION:incomplete_metadata})).unwrap(), &[APPLICATION.into()], &nix_job(), "nix (Nix) 2.34.8"), Err(nix::NixError::IncompleteClosure { missing }) if missing == Path::new(LIBRARY))
         );
         assert!(
-            matches!(nix::closure_document(&serde_json::to_vec(&json!({LIB:valid})).unwrap(), &[APP.into()], &nix_job(), "nix (Nix) 2.34.8"), Err(nix::NixError::IncompleteClosure { missing }) if missing == Path::new(APP))
+            matches!(nix::closure_document(&serde_json::to_vec(&json!({LIBRARY:valid_metadata})).unwrap(), &[APPLICATION.into()], &nix_job(), "nix (Nix) 2.34.8"), Err(nix::NixError::IncompleteClosure { missing }) if missing == Path::new(APPLICATION))
         );
 
         let directory = tempfile::tempdir().unwrap();

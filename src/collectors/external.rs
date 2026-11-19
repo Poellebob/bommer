@@ -35,7 +35,7 @@ pub(crate) enum ExternalError {
     NotDirectory { path: PathBuf },
 }
 
-struct Prepared {
+struct PreparedCommand {
     executable: OsString,
     arguments: Vec<OsString>,
     exclusions: Vec<String>,
@@ -122,7 +122,10 @@ pub(crate) fn prepare(
     ))
 }
 
-fn prepare_command(job: &Job, context: &CollectionContext) -> Result<Prepared, ExternalError> {
+fn prepare_command(
+    job: &Job,
+    context: &CollectionContext,
+) -> Result<PreparedCommand, ExternalError> {
     let target = match &job.target {
         Target::Host if matches!(job.kind, InventoryKind::Sbom) => OsString::from("dir:/"),
         Target::Directory(path) | Target::NixClosure(path) => path.as_os_str().to_owned(),
@@ -152,7 +155,7 @@ fn prepare_command(job: &Job, context: &CollectionContext) -> Result<Prepared, E
             OsString::from("--directory"),
             OsString::from("-z"),
         ];
-        let ignored = Process::capture(
+        let ignored_paths_output = Process::capture(
             OsStr::new("git"),
             &git_arguments,
             context.deadline,
@@ -162,13 +165,13 @@ fn prepare_command(job: &Job, context: &CollectionContext) -> Result<Prepared, E
         )?;
 
         patterns.extend([OsString::from("./.git"), OsString::from("./.git/**")]);
-        for path in ignored
+        for path in ignored_paths_output
             .stdout
             .split(|byte| *byte == 0)
             .filter(|path| !path.is_empty())
         {
-            let directory = path.ends_with(b"/");
-            let path = if directory {
+            let is_directory = path.ends_with(b"/");
+            let path = if is_directory {
                 &path[..path.len() - 1]
             } else {
                 path
@@ -180,7 +183,7 @@ fn prepare_command(job: &Job, context: &CollectionContext) -> Result<Prepared, E
                 }
                 pattern.push(*byte);
             }
-            if directory {
+            if is_directory {
                 pattern.extend_from_slice(b"/**");
             }
             patterns.push(OsString::from_vec(pattern));
@@ -188,9 +191,9 @@ fn prepare_command(job: &Job, context: &CollectionContext) -> Result<Prepared, E
     }
 
     let mut exclusions = Vec::new();
-    let mut seen = std::collections::HashSet::new();
+    let mut unique_patterns = std::collections::HashSet::new();
     for pattern in patterns {
-        if seen.insert(pattern.clone()) {
+        if unique_patterns.insert(pattern.clone()) {
             exclusions.push(crate::path_encoding::path_text(std::path::Path::new(
                 &pattern,
             )));
@@ -198,7 +201,7 @@ fn prepare_command(job: &Job, context: &CollectionContext) -> Result<Prepared, E
         }
     }
 
-    Ok(Prepared {
+    Ok(PreparedCommand {
         executable,
         arguments,
         exclusions,
@@ -216,9 +219,9 @@ fn command(
             let target = match &job.target {
                 Target::Host => OsString::from("dir:/"),
                 Target::Directory(path) => {
-                    let mut value = OsString::from("dir:");
-                    value.push(path);
-                    value
+                    let mut directory_target = OsString::from("dir:");
+                    directory_target.push(path);
+                    directory_target
                 }
                 Target::RegistryImage(image) => OsString::from(format!("registry:{image}")),
                 _ => return Err(ExternalError::UnsupportedTarget),
@@ -233,25 +236,27 @@ fn command(
 
             Ok(("syft".into(), arguments))
         }
-        Backend::Command(spec) => {
-            let arguments = spec
+        Backend::Command(command) => {
+            let arguments = command
                 .arguments
                 .iter()
                 .map(|argument| {
-                    let mut replaced = Vec::new();
-                    let mut remaining = argument.as_bytes();
-                    while let Some(index) =
-                        remaining.windows(8).position(|part| part == b"{target}")
+                    let mut substituted_argument = Vec::new();
+                    let mut remaining_bytes = argument.as_bytes();
+                    while let Some(token_start) = remaining_bytes
+                        .windows(8)
+                        .position(|window| window == b"{target}")
                     {
-                        replaced.extend_from_slice(&remaining[..index]);
-                        replaced.extend_from_slice(effective_target.as_bytes());
-                        remaining = &remaining[index + 8..];
+                        substituted_argument.extend_from_slice(&remaining_bytes[..token_start]);
+                        substituted_argument.extend_from_slice(effective_target.as_bytes());
+                        remaining_bytes = &remaining_bytes[token_start + 8..];
                     }
-                    replaced.extend_from_slice(remaining);
-                    OsString::from_vec(replaced)
+                    substituted_argument.extend_from_slice(remaining_bytes);
+                    OsString::from_vec(substituted_argument)
                 })
                 .collect();
-            Ok((spec.executable().to_owned(), arguments))
+
+            Ok((command.executable().to_owned(), arguments))
         }
         _ => Err(ExternalError::UnsupportedTarget),
     }
@@ -267,7 +272,7 @@ mod tests {
     use crate::collection::context::CollectionContext;
     use crate::collectors::external::{self, ExternalError};
     use crate::job::{Backend, InventoryKind, Job, Name, Scope, Target};
-    use crate::process::CommandSpec;
+    use crate::process::CommandSpecification;
 
     #[test]
     fn collector_arguments_match_backend_contracts() {
@@ -370,7 +375,7 @@ mod tests {
 
     #[test]
     fn command_substitutes_only_argument_tokens_without_shell_expansion() {
-        let spec = CommandSpec::new(
+        let command = CommandSpecification::new(
             "scanner-{target}".into(),
             [
                 "--path={target}",
@@ -390,7 +395,7 @@ mod tests {
             None,
             InventoryKind::Sbom,
             Target::Directory("/source tree; $(touch bad)".into()),
-            Backend::Command(spec),
+            Backend::Command(command),
         )
         .unwrap();
 
@@ -428,7 +433,7 @@ mod tests {
             (InventoryKind::Hbom, vec!["--target=", "", "literal"], ""),
             (InventoryKind::Cbom, vec!["--target=", "", "literal"], ""),
         ] {
-            let spec = CommandSpec::new(
+            let command = CommandSpecification::new(
                 "scanner-{target}".into(),
                 ["--target={target}", "{target}", "literal"]
                     .map(OsString::from)
@@ -440,7 +445,7 @@ mod tests {
                 None,
                 kind,
                 Target::Host,
-                Backend::Command(spec),
+                Backend::Command(command),
             )
             .unwrap();
             let context =
@@ -479,8 +484,11 @@ mod tests {
             InventoryKind::Sbom,
             Target::Directory(directory.path().into()),
             Backend::Command(
-                CommandSpec::new(script.into_os_string(), vec![marker.as_os_str().to_owned()])
-                    .unwrap(),
+                CommandSpecification::new(
+                    script.into_os_string(),
+                    vec![marker.as_os_str().to_owned()],
+                )
+                .unwrap(),
             ),
         )
         .unwrap();
@@ -515,7 +523,7 @@ mod tests {
             None,
             InventoryKind::Sbom,
             Target::Directory(file.path().into()),
-            Backend::Command(CommandSpec::new("/bin/sh".into(), vec![]).unwrap()),
+            Backend::Command(CommandSpecification::new("/bin/sh".into(), vec![]).unwrap()),
         )
         .unwrap();
 

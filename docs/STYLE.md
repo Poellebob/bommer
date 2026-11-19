@@ -43,7 +43,7 @@ Do not add mechanical getters and setters around ordinary data; use directly
 accessible fields where no invariant or resource ownership needs protection.
 Constructors enforce invariants; do not expose mutable fields that bypass them.
 Read-only accessors are justified for validated values such as `Name` and a
-`CommandSpec` executable, and for owned output resources such as a `RunOutput`
+`CommandSpecification` executable, and for owned output resources such as a `RunOutput`
 directory. These are not a reason to wrap every field. Use enums for finite states
 and error categories. Do not obscure orchestration:
 scan execution should read as collection, validation, publication, and recording.
@@ -73,6 +73,12 @@ lines to separate logical phases, independent operations, and neighboring method
 In tests, distinguish setup, execution, and assertions without section comments.
 Do not mechanically separate every statement or extract helpers just to shorten
 a function. Keep structs and enums above implementations and functions.
+
+Use descriptive variable, field, attribute, and method names. Do not abbreviate
+words merely to shorten identifiers. Keep established standards such as CLI, JSON,
+BOM, PEM, DER, OID, UTF-8, SHA-256, stdout, and stderr, and names required by
+external APIs. Preserve CLI flags and serialized field names when improving
+internal names.
 
 ## Resource Safety
 

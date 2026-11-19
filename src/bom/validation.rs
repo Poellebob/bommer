@@ -12,7 +12,7 @@ pub(crate) enum ValidationError {
     #[error("cannot decode BOM: {0}")]
     Decode(#[from] json::DecodeError),
     #[error("unsupported CycloneDX specVersion {version:?}")]
-    UnsupportedSpecVersion { version: String },
+    UnsupportedSpecificationVersion { version: String },
     #[error("BOM does not conform to the CycloneDX schema at {instance_path}")]
     SchemaViolation {
         instance_path: String,
@@ -33,15 +33,15 @@ pub(crate) enum ValidationError {
 }
 
 pub(crate) struct Validator {
-    v1_6: schemas::CompiledSchema,
-    v1_7: schemas::CompiledSchema,
+    version_1_6: schemas::CompiledSchema,
+    version_1_7: schemas::CompiledSchema,
 }
 
 impl Validator {
     pub(crate) fn new() -> Result<Self, ValidationError> {
         Ok(Self {
-            v1_6: schemas::CompiledSchema::new("1.6")?,
-            v1_7: schemas::CompiledSchema::new("1.7")?,
+            version_1_6: schemas::CompiledSchema::new("1.6")?,
+            version_1_7: schemas::CompiledSchema::new("1.7")?,
         })
     }
 
@@ -61,10 +61,10 @@ impl Validator {
             .and_then(serde_json::Value::as_str)
             .unwrap_or("");
         let schema = match version {
-            "1.6" => &self.v1_6,
-            "1.7" => &self.v1_7,
+            "1.6" => &self.version_1_6,
+            "1.7" => &self.version_1_7,
             _ => {
-                return Err(ValidationError::UnsupportedSpecVersion {
+                return Err(ValidationError::UnsupportedSpecificationVersion {
                     version: version.to_owned(),
                 });
             }
@@ -99,11 +99,13 @@ impl Validator {
 
 #[cfg(test)]
 mod tests {
-
-    use crate::bom::validation::{ValidationError, Validator};
-    use serde_json::json;
     use std::io;
     use std::sync::OnceLock;
+
+    use serde_json::json;
+
+    use crate::bom::validation::{ValidationError, Validator};
+
     fn validator() -> &'static Validator {
         static VALIDATOR: OnceLock<Validator> = OnceLock::new();
 
@@ -133,9 +135,9 @@ mod tests {
 
     #[test]
     fn validates_schema_defined_component_nesting_beyond_128_json_levels() {
-        for spec in ["1.6", "1.7"] {
+        for specification_version in ["1.6", "1.7"] {
             let input = format!(
-                "{{\"bomFormat\":\"CycloneDX\",\"specVersion\":\"{spec}\",\"version\":1,\"components\":[{}{}{}]}}",
+                "{{\"bomFormat\":\"CycloneDX\",\"specVersion\":\"{specification_version}\",\"version\":1,\"components\":[{}{}{}]}}",
                 r#"{"type":"cryptographic-asset","name":"ancestor","components":["#.repeat(70),
                 r#"{"type":"cryptographic-asset","name":"leaf"}"#,
                 "]}".repeat(70),
@@ -143,7 +145,7 @@ mod tests {
 
             let summary = validator().validate(input.as_bytes(), true).unwrap();
 
-            assert_eq!(summary.version, spec);
+            assert_eq!(summary.version, specification_version);
             assert_eq!(summary.component_count, 71);
         }
     }
@@ -159,23 +161,23 @@ mod tests {
             Err(ValidationError::InvalidBomFormat)
         ));
         assert!(
-            matches!(validator().validate(br#"{"bomFormat":"CycloneDX","specVersion":"1.5"}"#, false), Err(ValidationError::UnsupportedSpecVersion { version }) if version == "1.5")
+            matches!(validator().validate(br#"{"bomFormat":"CycloneDX","specVersion":"1.5"}"#, false), Err(ValidationError::UnsupportedSpecificationVersion { version }) if version == "1.5")
         );
         assert!(matches!(
             validator().validate(br#"{"bomFormat":"CycloneDX","specVersion":1.6}"#, false),
-            Err(ValidationError::UnsupportedSpecVersion { .. })
+            Err(ValidationError::UnsupportedSpecificationVersion { .. })
         ));
     }
 
     #[test]
     fn native_empty_inventories_are_allowed_but_external_ones_are_not() {
-        for spec in ["1.6", "1.7"] {
+        for specification_version in ["1.6", "1.7"] {
             for extra in [
                 json!({}),
                 json!({"components":[]}),
                 json!({"metadata":{"component":{"type":"application","name":"root"}}}),
             ] {
-                let mut input = json!({"bomFormat":"CycloneDX","specVersion":spec,"version":1});
+                let mut input = json!({"bomFormat":"CycloneDX","specVersion":specification_version,"version":1});
                 input
                     .as_object_mut()
                     .unwrap()
@@ -192,7 +194,7 @@ mod tests {
                 ));
             }
 
-            let missing = json!({"bomFormat":"CycloneDX","specVersion":spec,"components":[{"type":"library","name":"x"}]});
+            let missing = json!({"bomFormat":"CycloneDX","specVersion":specification_version,"components":[{"type":"library","name":"x"}]});
             let bytes = serde_json::to_vec(&missing).unwrap();
 
             assert!(validator().validate(&bytes, false).is_ok());
@@ -218,10 +220,10 @@ mod tests {
 
     #[test]
     fn external_inventory_requires_top_level_components_even_with_nested_inventory() {
-        for spec in ["1.6", "1.7"] {
+        for specification_version in ["1.6", "1.7"] {
             for components in [None, Some(json!([]))] {
                 let mut input = json!({
-                    "bomFormat":"CycloneDX", "specVersion":spec, "version":1,
+                    "bomFormat":"CycloneDX", "specVersion":specification_version, "version":1,
                     "metadata":{"component":{
                         "type":"application", "name":"root",
                         "components":[{"type":"library","name":"nested"}]
@@ -235,7 +237,7 @@ mod tests {
                 let bytes = serde_json::to_vec(&input).unwrap();
                 let summary = validator().validate(&bytes, false).unwrap();
 
-                assert_eq!(summary.version, spec);
+                assert_eq!(summary.version, specification_version);
                 assert_eq!(summary.component_count, 1);
                 assert!(matches!(
                     validator().validate(&bytes, true),
@@ -247,7 +249,7 @@ mod tests {
 
     #[test]
     fn enforces_full_embedded_schemas_including_external_definitions_and_formats() {
-        for spec in ["1.6", "1.7"] {
+        for specification_version in ["1.6", "1.7"] {
             for invalid in [
                 json!({"surprise":true}),
                 json!({"serialNumber":"not-a-uuid"}),
@@ -262,7 +264,8 @@ mod tests {
                 json!({"components":[{"type":"cryptographic-asset","name":"x","cryptoProperties":{"assetType":"invalid"}}]}),
                 json!({"components":[{"type":"cryptographic-asset","name":"x","cryptoProperties":{"assetType":"algorithm","algorithmProperties":{"primitive":"invalid"}}}]}),
             ] {
-                let mut input = json!({"bomFormat":"CycloneDX","specVersion":spec});
+                let mut input =
+                    json!({"bomFormat":"CycloneDX","specVersion":specification_version});
                 input
                     .as_object_mut()
                     .unwrap()
@@ -298,18 +301,18 @@ mod tests {
             "file:///etc/passwd".to_owned(),
             "http://cyclonedx.org/schema/bom-1.5.schema.json".to_owned(),
         ] {
-            for spec in ["1.6", "1.7"] {
-                let input = json!({"$schema":uri,"bomFormat":"CycloneDX","specVersion":spec});
+            for specification_version in ["1.6", "1.7"] {
+                let input = json!({"$schema":uri,"bomFormat":"CycloneDX","specVersion":specification_version});
                 assert!(
                     validator()
                         .validate(&serde_json::to_vec(&input).unwrap(), false)
                         .is_ok()
                 );
 
-                let input = json!({"$schema":uri,"bomFormat":"CycloneDX","specVersion":spec,"components":[{"type":"cryptographic-asset","name":"AES","cryptoProperties":{"assetType":"algorithm","algorithmProperties":{"algorithmFamily":"AES"}}}]});
+                let input = json!({"$schema":uri,"bomFormat":"CycloneDX","specVersion":specification_version,"components":[{"type":"cryptographic-asset","name":"AES","cryptoProperties":{"assetType":"algorithm","algorithmProperties":{"algorithmFamily":"AES"}}}]});
                 let result = validator().validate(&serde_json::to_vec(&input).unwrap(), false);
 
-                if spec == "1.7" {
+                if specification_version == "1.7" {
                     assert!(result.is_ok());
                 } else {
                     assert!(matches!(
@@ -327,9 +330,9 @@ mod tests {
 
     #[test]
     fn counts_schema_component_locations_not_component_shaped_values() {
-        for spec in ["1.6", "1.7"] {
+        for specification_version in ["1.6", "1.7"] {
             let input = json!({
-                "bomFormat":"CycloneDX", "specVersion":spec, "version":1,
+                "bomFormat":"CycloneDX", "specVersion":specification_version, "version":1,
                 "metadata":{
                     "component":{"type":"application","name":"root","components":[
                         {"type":"library","name":"child","components":[{"type":"library","name":"grandchild"}]}

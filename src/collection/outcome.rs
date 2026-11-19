@@ -165,6 +165,7 @@ mod tests {
             DiagnosticCode::MissingPath,
             Some("bommer:unix-bytes:ff".into()),
         );
+
         assert_eq!(
             serde_json::to_value(diagnostic).unwrap(),
             json!({"code": "missing-path", "path": "bommer:utf8:bommer:unix-bytes:ff"})

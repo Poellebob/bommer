@@ -4,7 +4,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::path_encoding::path_text;
-use crate::process::CommandSpec;
+use crate::process::CommandSpecification;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -48,7 +48,7 @@ pub(crate) enum Backend {
         exclusions: Vec<String>,
         respect_gitignore: bool,
     },
-    Command(CommandSpec),
+    Command(CommandSpecification),
     Nix {
         roots: Vec<PathBuf>,
     },
@@ -100,10 +100,11 @@ impl Name {
         let Some(first) = value.bytes().next() else {
             return Err(NameError::Empty);
         };
+
         if !first.is_ascii_alphanumeric()
             || !value
                 .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
         {
             return Err(NameError::InvalidCharacters);
         }
@@ -147,7 +148,7 @@ impl Target {
     pub(crate) fn display(&self) -> String {
         match self {
             Self::Host => String::new(),
-            Self::Directory(p) | Self::NixClosure(p) => path_text(p),
+            Self::Directory(path) | Self::NixClosure(path) => path_text(path),
             Self::RegistryImage(image) => format!("registry:{image}"),
         }
     }
@@ -186,13 +187,13 @@ impl Job {
             return Err(JobError::ReservedName);
         }
 
-        let kind_ok = match &backend {
+        let kind_supported = match &backend {
             Backend::Command(_) => true,
             Backend::Hbom => kind == InventoryKind::Hbom,
             Backend::Syft { .. } | Backend::Nix { .. } => kind == InventoryKind::Sbom,
             Backend::Certificates { .. } | Backend::Import { .. } => kind == InventoryKind::Cbom,
         };
-        if !kind_ok {
+        if !kind_supported {
             return Err(JobError::BackendKind);
         }
 
@@ -226,7 +227,7 @@ impl Job {
                 {
                     return Err(JobError::BackendTarget);
                 }
-                if roots.iter().any(|p| !p.is_absolute()) {
+                if roots.iter().any(|path| !path.is_absolute()) {
                     return Err(JobError::Options);
                 }
             }
@@ -241,7 +242,7 @@ impl Job {
                 if paths.is_empty()
                     || paths
                         .iter()
-                        .any(|p| p.as_os_str().is_empty() || (host && !p.is_absolute()))
+                        .any(|path| path.as_os_str().is_empty() || (host && !path.is_absolute()))
                     || *max_file_bytes == 0
                     || *max_file_bytes > 64 << 20
                 {
@@ -294,6 +295,7 @@ mod tests {
         }
 
         let input = "application_2-prod";
+
         assert_eq!(
             Name::new(input.into()).unwrap().as_str(),
             "application_2-prod"

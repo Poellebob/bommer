@@ -48,7 +48,7 @@ pub(crate) struct JobResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     inventory: Option<String>,
     #[serde(rename = "specVersion", skip_serializing_if = "Option::is_none")]
-    spec_version: Option<String>,
+    specification_version: Option<String>,
     findings: usize,
     #[serde(rename = "collectorVersion", skip_serializing_if = "Option::is_none")]
     collector_version: Option<String>,
@@ -99,7 +99,7 @@ impl JobResult {
                 "application"
             },
             inventory: job.inventory.as_ref().map(|name| name.as_str().into()),
-            spec_version: None,
+            specification_version: None,
             findings: 0,
             collector_version: None,
             diagnostics: vec![],
@@ -125,20 +125,22 @@ impl JobResult {
         &mut self,
         mut outcome: CollectionOutcome,
         artifact: ArtifactRecord,
-        spec_version: &str,
+        specification_version: &str,
         count: usize,
         external: bool,
     ) {
         self.collected(&mut outcome);
+
         self.status = outcome.status;
         self.coverage = outcome.coverage;
         self.findings = if external { count } else { outcome.findings };
         self.diagnostics = outcome.diagnostics;
         self.collector_version = outcome.collector_version;
         self.evidence = outcome.evidence;
+
         self.artifact = Some(artifact.name);
         self.digest = Some(artifact.sha256);
-        self.spec_version = Some(spec_version.into());
+        self.specification_version = Some(specification_version.into());
     }
 
     pub(crate) fn fail(
@@ -228,6 +230,7 @@ mod tests {
     #[test]
     fn initial_manifest_and_pending_result_preserve_exact_wire_fields() {
         let manifest = Manifest::new();
+
         assert!(!manifest.is_unsuccessful());
         assert_eq!(
             serde_json::to_value(&manifest).unwrap(),
@@ -236,11 +239,15 @@ mod tests {
                 "validation": "json-schema-offline", "results": [],
             })
         );
+
         let result = JobResult::pending(&job()).unwrap();
+
         assert!(result.is_unsuccessful());
+
         let mut value = document(&result);
         OffsetDateTime::parse(value["started"].as_str().unwrap(), &Rfc3339).unwrap();
         value.as_object_mut().unwrap().remove("started");
+
         assert_eq!(
             value,
             json!({
@@ -264,14 +271,18 @@ mod tests {
             },
             ..CollectionOutcome::external()
         };
+
         result.complete(outcome, artifact(), "1.6", 7, true);
         result.finish().unwrap();
+
         assert!(!result.is_unsuccessful());
+
         let mut value = document(&result);
         for key in ["started", "finished"] {
             OffsetDateTime::parse(value[key].as_str().unwrap(), &Rfc3339).unwrap();
             value.as_object_mut().unwrap().remove(key);
         }
+
         assert_eq!(
             value,
             json!({
@@ -282,8 +293,10 @@ mod tests {
                 "collectorVersion": "syft/1", "evidence": {"source": "fixture"}, "coverage": "unknown",
             })
         );
+
         let mut manifest = Manifest::new();
         manifest.record(result);
+
         assert!(!manifest.is_unsuccessful());
     }
 
@@ -306,7 +319,9 @@ mod tests {
             9,
             false,
         );
+
         let value = document(&result);
+
         assert_eq!(value["status"], "partial");
         assert_eq!(value["findings"], 2);
         assert_eq!(value["coverage"], "declared-scope");
@@ -320,8 +335,10 @@ mod tests {
         assert!(value.get("failure").is_none());
         assert!(value.get("error").is_none());
         assert!(result.is_unsuccessful());
+
         let mut manifest = Manifest::new();
         manifest.record(result);
+
         assert!(manifest.is_unsuccessful());
     }
 
@@ -341,16 +358,21 @@ mod tests {
                 Some("collector/1".into()),
             )
         };
+
         result.collected(&mut outcome);
+
         assert!(outcome.scope.target.is_none());
         assert!(outcome.scope.exclusions.is_none());
+
         result.fail(
             &"invalid artifact",
             Failure::new(FailureKind::Validation),
             ExecutionScope::default(),
         );
         result.finish().unwrap();
+
         let value = document(&result);
+
         assert_eq!(value["target"], "/observed");
         assert_eq!(value["exclude"], json!(["effective"]));
         assert_eq!(value["error"], "invalid artifact");
@@ -368,8 +390,10 @@ mod tests {
         ] {
             assert!(value.get(key).is_none(), "unexpected field {key}");
         }
+
         let mut manifest = Manifest::new();
         manifest.record(result);
+
         assert!(manifest.is_unsuccessful());
     }
 
@@ -384,7 +408,9 @@ mod tests {
                 exclusions: Some(vec!["prepared".into()]),
             },
         );
+
         let value = document(&result);
+
         assert_eq!(value["target"], "/prepared");
         assert_eq!(value["exclude"], json!(["prepared"]));
         assert_eq!(value["failure"], json!({"kind": "collection"}));
@@ -397,8 +423,10 @@ mod tests {
         let mut result = JobResult::pending(&job()).unwrap();
         result.collected(&mut CollectionOutcome::external());
         let value = document(&result);
+
         assert_eq!(value["target"], "/app");
         assert_eq!(value["exclude"], json!(["manual"]));
+
         result.collected(&mut CollectionOutcome {
             scope: ExecutionScope {
                 target: Some(String::new()),
@@ -407,6 +435,7 @@ mod tests {
             ..CollectionOutcome::external()
         });
         let value = document(&result);
+
         assert!(value.get("target").is_none());
         assert!(value.get("exclude").is_none());
     }
@@ -431,6 +460,7 @@ mod tests {
         );
         let mut value = document(&result);
         value.as_object_mut().unwrap().remove("started");
+
         assert_eq!(
             value,
             json!({

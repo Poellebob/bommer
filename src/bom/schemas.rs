@@ -32,17 +32,6 @@ pub(crate) struct ResourceRefused {
 
 pub(crate) struct DenyRetrieval;
 
-impl Retrieve for DenyRetrieval {
-    fn retrieve(
-        &self,
-        uri: &Uri<String>,
-    ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
-        Err(Box::new(ResourceRefused {
-            uri: uri.to_string(),
-        }))
-    }
-}
-
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SchemaError {
     #[error("invalid embedded schema JSON")]
@@ -56,6 +45,17 @@ pub(crate) enum SchemaError {
 pub(crate) struct CompiledSchema {
     validator: jsonschema::Validator,
     document: Value,
+}
+
+impl Retrieve for DenyRetrieval {
+    fn retrieve(
+        &self,
+        uri: &Uri<String>,
+    ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+        Err(Box::new(ResourceRefused {
+            uri: uri.to_string(),
+        }))
+    }
 }
 
 impl CompiledSchema {
@@ -141,10 +141,11 @@ impl CompiledSchema {
 
 #[cfg(test)]
 mod tests {
-
-    use crate::bom::schemas::{DenyRetrieval, ResourceRefused};
     use jsonschema::Retrieve;
     use serde_json::json;
+
+    use crate::bom::schemas::{DenyRetrieval, ResourceRefused};
+
     #[test]
     fn retriever_denies_all_nonregistered_resources() {
         for uri in [

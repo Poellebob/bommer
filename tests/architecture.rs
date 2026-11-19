@@ -32,48 +32,50 @@ struct SourceGraph {
     paths: Vec<(usize, Name)>,
     types: BTreeSet<Name>,
     type_aliases: BTreeMap<Name, (usize, Name)>,
-    impls: Vec<(usize, Name)>,
+    implementations: Vec<(usize, Name)>,
 }
 
-fn test_only(attrs: &[syn::Attribute]) -> bool {
-    attrs.iter().any(|attr| {
-        if attr.path().is_ident("test") {
+fn is_test_only(attributes: &[syn::Attribute]) -> bool {
+    attributes.iter().any(|attribute| {
+        if attribute.path().is_ident("test") {
             return true;
         }
 
-        if !attr.path().is_ident("cfg") {
+        if !attribute.path().is_ident("cfg") {
             return false;
         }
 
         // Parse cfg syntax rather than looking for the word "test" in source.
-        attr.parse_args::<syn::Meta>().is_ok_and(|meta| match meta {
-            syn::Meta::Path(path) => path.is_ident("test"),
-            syn::Meta::List(list) if list.path.is_ident("all") => {
-                use syn::parse::Parser;
+        attribute
+            .parse_args::<syn::Meta>()
+            .is_ok_and(|meta| match meta {
+                syn::Meta::Path(path) => path.is_ident("test"),
+                syn::Meta::List(list) if list.path.is_ident("all") => {
+                    use syn::parse::Parser;
 
-                syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated
-                    .parse2(list.tokens)
-                    .is_ok_and(|items| {
-                        items.iter().any(
+                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated
+                        .parse2(list.tokens)
+                        .is_ok_and(|items| {
+                            items.iter().any(
                             |item| matches!(item, syn::Meta::Path(path) if path.is_ident("test")),
                         )
-                    })
-            }
-            _ => false,
-        })
+                        })
+                }
+                _ => false,
+            })
     })
 }
 
-fn imports(tree: &syn::UseTree, prefix: Name, output: &mut Vec<Import>) {
+fn collect_imports(tree: &syn::UseTree, prefix: Name, output: &mut Vec<Import>) {
     match tree {
         syn::UseTree::Path(path) => {
             let mut prefix = prefix;
             prefix.push(path.ident.to_string());
-            imports(&path.tree, prefix, output);
+            collect_imports(&path.tree, prefix, output);
         }
         syn::UseTree::Group(group) => {
             for tree in &group.items {
-                imports(tree, prefix.clone(), output);
+                collect_imports(tree, prefix.clone(), output);
             }
         }
         syn::UseTree::Glob(_) => output.push(Import {
@@ -107,7 +109,7 @@ fn imports(tree: &syn::UseTree, prefix: Name, output: &mut Vec<Import>) {
 }
 
 fn item_name(item: &syn::Item) -> Option<String> {
-    let ident = match item {
+    let identifier = match item {
         syn::Item::Const(item) => &item.ident,
         syn::Item::Enum(item) => &item.ident,
         syn::Item::Fn(item) => &item.sig.ident,
@@ -121,30 +123,30 @@ fn item_name(item: &syn::Item) -> Option<String> {
         _ => return None,
     };
 
-    Some(ident.to_string())
+    Some(identifier.to_string())
 }
 
-fn skipped(item: &syn::Item) -> bool {
+fn is_excluded_item(item: &syn::Item) -> bool {
     match item {
         syn::Item::Mod(item) => {
             item.ident == "tests"
                 || item.ident.to_string().ends_with("_tests")
-                || test_only(&item.attrs)
+                || is_test_only(&item.attrs)
         }
-        syn::Item::Fn(item) => test_only(&item.attrs),
-        syn::Item::Use(item) => test_only(&item.attrs),
-        syn::Item::Const(item) => test_only(&item.attrs),
-        syn::Item::Enum(item) => test_only(&item.attrs),
-        syn::Item::ExternCrate(item) => test_only(&item.attrs),
-        syn::Item::ForeignMod(item) => test_only(&item.attrs),
-        syn::Item::Impl(item) => test_only(&item.attrs),
-        syn::Item::Macro(item) => test_only(&item.attrs),
-        syn::Item::Static(item) => test_only(&item.attrs),
-        syn::Item::Struct(item) => test_only(&item.attrs),
-        syn::Item::Trait(item) => test_only(&item.attrs),
-        syn::Item::TraitAlias(item) => test_only(&item.attrs),
-        syn::Item::Type(item) => test_only(&item.attrs),
-        syn::Item::Union(item) => test_only(&item.attrs),
+        syn::Item::Fn(item) => is_test_only(&item.attrs),
+        syn::Item::Use(item) => is_test_only(&item.attrs),
+        syn::Item::Const(item) => is_test_only(&item.attrs),
+        syn::Item::Enum(item) => is_test_only(&item.attrs),
+        syn::Item::ExternCrate(item) => is_test_only(&item.attrs),
+        syn::Item::ForeignMod(item) => is_test_only(&item.attrs),
+        syn::Item::Impl(item) => is_test_only(&item.attrs),
+        syn::Item::Macro(item) => is_test_only(&item.attrs),
+        syn::Item::Static(item) => is_test_only(&item.attrs),
+        syn::Item::Struct(item) => is_test_only(&item.attrs),
+        syn::Item::Trait(item) => is_test_only(&item.attrs),
+        syn::Item::TraitAlias(item) => is_test_only(&item.attrs),
+        syn::Item::Type(item) => is_test_only(&item.attrs),
+        syn::Item::Union(item) => is_test_only(&item.attrs),
         _ => false,
     }
 }
@@ -156,19 +158,19 @@ impl SourceGraph {
         let file =
             syn::parse_file(&source).map_err(|error| format!("{}: {error}", root.display()))?;
 
-        graph.module(Vec::new(), file.items, root.parent().unwrap(), read)?;
+        graph.collect_module(Vec::new(), file.items, root.parent().unwrap(), read)?;
 
         Ok(graph)
     }
 
-    fn scope(&mut self, module: Name, parent: Option<usize>, items: &[syn::Item]) -> usize {
+    fn add_scope(&mut self, module: Name, parent: Option<usize>, items: &[syn::Item]) -> usize {
         let mut scope = Scope {
             module,
             parent,
             ..Scope::default()
         };
 
-        for item in items.iter().filter(|item| !skipped(item)) {
+        for item in items.iter().filter(|item| !is_excluded_item(item)) {
             if let Some(name) = item_name(item) {
                 scope.names.insert(name);
             }
@@ -179,7 +181,8 @@ impl SourceGraph {
                 } else {
                     Vec::new()
                 };
-                imports(&item.tree, prefix, &mut scope.imports);
+
+                collect_imports(&item.tree, prefix, &mut scope.imports);
             }
 
             if let syn::Item::ExternCrate(item) = item {
@@ -201,26 +204,27 @@ impl SourceGraph {
         index
     }
 
-    fn module(
+    fn collect_module(
         &mut self,
         name: Name,
         items: Vec<syn::Item>,
         directory: &Path,
         read: &impl Fn(&Path) -> Result<String, String>,
     ) -> Result<(), String> {
-        let scope = self.scope(name.clone(), None, &items);
+        let scope = self.add_scope(name.clone(), None, &items);
         self.modules.insert(name.clone(), scope);
 
-        for item in items.iter().filter(|item| !skipped(item)) {
+        for item in items.iter().filter(|item| !is_excluded_item(item)) {
             if matches!(item, syn::Item::Struct(_) | syn::Item::Enum(_)) {
                 let mut owner = name.clone();
                 owner.push(item_name(item).unwrap());
                 self.types.insert(owner);
             }
+
             if let syn::Item::Type(alias) = item
-                && let syn::Type::Path(ty) = alias.ty.as_ref()
-                && ty.qself.is_none()
-                && ty.path.leading_colon.is_none()
+                && let syn::Type::Path(type_path) = alias.ty.as_ref()
+                && type_path.qself.is_none()
+                && type_path.path.leading_colon.is_none()
             {
                 let mut owner = name.clone();
                 owner.push(alias.ident.to_string());
@@ -228,10 +232,11 @@ impl SourceGraph {
                     owner,
                     (
                         scope,
-                        ty.path
+                        type_path
+                            .path
                             .segments
                             .iter()
-                            .map(|part| part.ident.to_string())
+                            .map(|segment| segment.ident.to_string())
                             .collect(),
                     ),
                 );
@@ -239,7 +244,7 @@ impl SourceGraph {
         }
 
         for item in &items {
-            if skipped(item) {
+            if is_excluded_item(item) {
                 continue;
             }
 
@@ -248,19 +253,19 @@ impl SourceGraph {
                 child.push(module.ident.to_string());
 
                 if let Some((_, items)) = &module.content {
-                    self.module(
+                    self.collect_module(
                         child,
                         items.clone(),
                         &directory.join(module.ident.to_string()),
                         read,
                     )?;
                 } else {
-                    let explicit = module.attrs.iter().find_map(|attr| {
-                        if !attr.path().is_ident("path") {
+                    let explicit_path = module.attrs.iter().find_map(|attribute| {
+                        if !attribute.path().is_ident("path") {
                             return None;
                         }
 
-                        match &attr.meta {
+                        match &attribute.meta {
                             syn::Meta::NameValue(value) => match &value.value {
                                 syn::Expr::Lit(syn::ExprLit {
                                     lit: syn::Lit::Str(path),
@@ -272,17 +277,17 @@ impl SourceGraph {
                         }
                     });
 
-                    let (path, source) = if let Some(path) = explicit {
+                    let (path, source) = if let Some(path) = explicit_path {
                         let path = directory.join(path);
                         let source = read(&path)?;
                         (path, source)
                     } else {
-                        let flat = directory.join(format!("{}.rs", module.ident));
-                        let nested = directory.join(module.ident.to_string()).join("mod.rs");
+                        let flat_path = directory.join(format!("{}.rs", module.ident));
+                        let nested_path = directory.join(module.ident.to_string()).join("mod.rs");
 
-                        match (read(&flat), read(&nested)) {
-                            (Ok(source), Err(_)) => (flat, source),
-                            (Err(_), Ok(source)) => (nested, source),
+                        match (read(&flat_path), read(&nested_path)) {
+                            (Ok(source), Err(_)) => (flat_path, source),
+                            (Err(_), Ok(source)) => (nested_path, source),
                             (Ok(_), Ok(_)) => {
                                 return Err(format!("ambiguous module: {}", module.ident));
                             }
@@ -298,10 +303,10 @@ impl SourceGraph {
                         path.with_extension("")
                     };
 
-                    self.module(child, file.items, &directory, read)?;
+                    self.collect_module(child, file.items, &directory, read)?;
                 }
             } else {
-                Paths { graph: self, scope }.visit_item(item);
+                PathCollector { graph: self, scope }.visit_item(item);
             }
         }
 
@@ -347,7 +352,7 @@ impl SourceGraph {
             "super" => {
                 let mut target = current.module.clone();
 
-                while rest.first().is_some_and(|part| part == "super") {
+                while rest.first().is_some_and(|segment| segment == "super") {
                     target.pop()?;
                     rest = &rest[1..];
                 }
@@ -355,11 +360,12 @@ impl SourceGraph {
                 target
             }
             first => {
-                let mut lexical = Some(scope);
+                let mut lexical_scope = Some(scope);
                 let mut found = None;
 
-                while let Some(index) = lexical {
+                while let Some(index) = lexical_scope {
                     let candidate = &self.scopes[index];
+
                     if candidate.names.contains(first) {
                         // Block-local names shadow imports but are not module members.
                         if candidate.parent.is_some() {
@@ -372,11 +378,12 @@ impl SourceGraph {
                         break;
                     }
 
-                    let named = candidate
+                    let named_import = candidate
                         .imports
                         .iter()
                         .find(|import| import.alias.as_deref() == Some(first));
-                    if let Some(import) = named {
+
+                    if let Some(import) = named_import {
                         // An external alias must not fall through to an internal name.
                         found = Some(self.resolve(index, &import.path, seen, owners)?);
                         owners.insert(candidate.module.clone());
@@ -410,7 +417,7 @@ impl SourceGraph {
                         break;
                     }
 
-                    lexical = candidate.parent;
+                    lexical_scope = candidate.parent;
                 }
 
                 rest = &rest[1..];
@@ -463,13 +470,14 @@ impl SourceGraph {
         edges
     }
 
-    fn misplaced_impls(&self) -> BTreeSet<(Name, Name)> {
-        self.impls
+    fn misplaced_implementations(&self) -> BTreeSet<(Name, Name)> {
+        self.implementations
             .iter()
             .filter_map(|(scope, path)| {
                 let mut target =
                     self.resolve(*scope, path, &mut BTreeSet::new(), &mut BTreeSet::new())?;
                 let mut seen = BTreeSet::new();
+
                 while let Some((scope, path)) = self.type_aliases.get(&target) {
                     if !seen.insert(target.clone()) {
                         return None;
@@ -477,7 +485,9 @@ impl SourceGraph {
                     target =
                         self.resolve(*scope, path, &mut BTreeSet::new(), &mut BTreeSet::new())?;
                 }
+
                 let source = &self.scopes[*scope].module;
+
                 (self.types.contains(&target) && source != &target[..target.len() - 1])
                     .then(|| (source.clone(), target))
             })
@@ -485,17 +495,17 @@ impl SourceGraph {
     }
 }
 
-struct Paths<'a> {
+struct PathCollector<'a> {
     graph: &'a mut SourceGraph,
     scope: usize,
 }
 
-impl<'ast> Visit<'ast> for Paths<'_> {
+impl<'ast> Visit<'ast> for PathCollector<'_> {
     // pub(crate)/pub(super) restrict visibility; they do not use an ancestor.
     fn visit_visibility(&mut self, _: &'ast syn::Visibility) {}
 
     fn visit_item(&mut self, item: &'ast syn::Item) {
-        if !skipped(item) {
+        if !is_excluded_item(item) {
             visit::visit_item(self, item);
         }
     }
@@ -505,16 +515,17 @@ impl<'ast> Visit<'ast> for Paths<'_> {
     fn visit_item_use(&mut self, _: &'ast syn::ItemUse) {}
 
     fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
-        if let syn::Type::Path(ty) = item.self_ty.as_ref()
-            && ty.qself.is_none()
-            && ty.path.leading_colon.is_none()
+        if let syn::Type::Path(type_path) = item.self_ty.as_ref()
+            && type_path.qself.is_none()
+            && type_path.path.leading_colon.is_none()
         {
-            self.graph.impls.push((
+            self.graph.implementations.push((
                 self.scope,
-                ty.path
+                type_path
+                    .path
                     .segments
                     .iter()
-                    .map(|part| part.ident.to_string())
+                    .map(|segment| segment.ident.to_string())
                     .collect(),
             ));
         }
@@ -529,7 +540,7 @@ impl<'ast> Visit<'ast> for Paths<'_> {
                 self.scope,
                 path.segments
                     .iter()
-                    .map(|part| part.ident.to_string())
+                    .map(|segment| segment.ident.to_string())
                     .collect(),
             ));
         }
@@ -541,8 +552,8 @@ impl<'ast> Visit<'ast> for Paths<'_> {
         let items: Vec<_> = block
             .stmts
             .iter()
-            .filter_map(|stmt| {
-                if let syn::Stmt::Item(item) = stmt {
+            .filter_map(|statement| {
+                if let syn::Stmt::Item(item) = statement {
                     Some(item.clone())
                 } else {
                     None
@@ -550,15 +561,16 @@ impl<'ast> Visit<'ast> for Paths<'_> {
             })
             .collect();
 
-        let previous = self.scope;
-        self.scope = self.graph.scope(
-            self.graph.scopes[previous].module.clone(),
-            Some(previous),
+        let previous_scope = self.scope;
+        self.scope = self.graph.add_scope(
+            self.graph.scopes[previous_scope].module.clone(),
+            Some(previous_scope),
             &items,
         );
 
         visit::visit_block(self, block);
-        self.scope = previous;
+
+        self.scope = previous_scope;
     }
 }
 
@@ -578,6 +590,7 @@ fn violations(edges: &Edges) -> BTreeSet<Violation> {
 
         let mut pending = vec![target];
         let mut seen = BTreeSet::new();
+
         while let Some(node) = pending.pop() {
             if node == source {
                 errors.insert(Violation::Cycle(source.clone(), target.clone()));
@@ -632,14 +645,18 @@ fn layer_violations(edges: &Edges) -> Edges {
 
         let mut pending = vec![target];
         let mut seen = BTreeSet::new();
+
         while let Some(node) = pending.pop() {
             if !seen.insert(node) {
                 continue;
             }
+
             let layer = node.first().map_or("main", String::as_str);
+
             if forbidden.contains(&layer) {
                 errors.insert((source.clone(), node.clone()));
             }
+
             pending.extend(
                 edges
                     .iter()
@@ -659,8 +676,22 @@ fn production_dependencies_have_no_ancestors_or_cycles() {
     })
     .expect("parse production module tree");
 
+    for scope in &graph.scopes {
+        for import in &scope.imports {
+            assert!(
+                !import
+                    .path
+                    .first()
+                    .is_some_and(|segment| segment == "super"),
+                "production imports must use explicit internal paths: {} imports {}",
+                scope.module.join("::"),
+                import.path.join("::")
+            );
+        }
+    }
+
     assert_eq!(violations(&graph.edges()), BTreeSet::new());
-    assert_eq!(graph.misplaced_impls(), BTreeSet::new());
+    assert_eq!(graph.misplaced_implementations(), BTreeSet::new());
     assert_eq!(layer_violations(&graph.edges()), BTreeSet::new());
 }
 
@@ -1003,7 +1034,7 @@ fn inherent_and_trait_impls_stay_with_the_struct_or_enum_owner() {
     ]);
 
     assert_eq!(
-        graph.misplaced_impls(),
+        graph.misplaced_implementations(),
         [
             (name("aliases"), name("owner::Record")),
             (name("inline"), name("owner::Record")),
@@ -1030,7 +1061,7 @@ fn inline_child_cannot_implement_its_parents_type_even_in_the_same_file() {
     )]);
 
     assert_eq!(
-        graph.misplaced_impls(),
+        graph.misplaced_implementations(),
         [(name("owner::child"), name("owner::Record"))]
             .into_iter()
             .collect()
@@ -1059,7 +1090,7 @@ fn local_impls_and_external_types_are_not_misplaced() {
         "#,
     )]);
 
-    assert!(graph.misplaced_impls().is_empty());
+    assert!(graph.misplaced_implementations().is_empty());
 }
 
 #[test]
@@ -1102,6 +1133,7 @@ fn critical_layers_reject_dependencies_including_descendant_modules() {
                  mod {target} {{ pub mod nested {{ pub struct Item; }} }}"
             );
             let graph = fixture(&[("src/main.rs", &source_text)]);
+
             assert_eq!(
                 layer_violations(&graph.edges()),
                 expected_edges(&[(&format!("{source}::leaf"), &format!("{target}::nested"),)]),
@@ -1114,8 +1146,9 @@ fn critical_layers_reject_dependencies_including_descendant_modules() {
 #[test]
 fn cli_root_and_transitive_facades_cannot_bypass_layer_rules() {
     for source in ["collectors", "backend", "collection", "process"] {
-        let text = format!("struct Args; mod {source} {{ fn run(_: crate::Args) {{}} }}");
-        let graph = fixture(&[("src/main.rs", &text)]);
+        let source_text = format!("struct Args; mod {source} {{ fn run(_: crate::Args) {{}} }}");
+        let graph = fixture(&[("src/main.rs", &source_text)]);
+
         assert_eq!(
             layer_violations(&graph.edges()),
             expected_edges(&[(source, "main")])
@@ -1130,6 +1163,7 @@ fn cli_root_and_transitive_facades_cannot_bypass_layer_rules() {
         mod scan { pub struct Work; }
         "#,
     )]);
+
     assert_eq!(
         layer_violations(&graph.edges()),
         expected_edges(&[("doctor", "scan")])
@@ -1143,6 +1177,7 @@ fn cli_root_and_transitive_facades_cannot_bypass_layer_rules() {
         mod scan { pub fn run() {} }
         "#,
     )]);
+
     assert_eq!(
         layer_violations(&graph.edges()),
         expected_edges(&[("doctor", "scan")])
