@@ -14,7 +14,7 @@ use rustix::fs::{FlockOperation, flock};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::bom::Validator;
+use crate::bom::validation::Validator;
 use crate::collection_context::CollectionContext;
 use crate::collection_outcome::CollectionOutcome;
 use crate::collectors::external;

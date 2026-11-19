@@ -17,7 +17,7 @@ pub(crate) enum CollectionError {
     #[error(transparent)]
     Nix(#[from] nix::NixError),
     #[error(transparent)]
-    Certificates(#[from] certificates::CertificateError),
+    Certificates(#[from] certificates::error::CertificateError),
     #[error(transparent)]
     Import(#[from] import::ImportError),
     #[error(transparent)]
@@ -38,7 +38,7 @@ impl CollectionError {
         let interruption = match self {
             Self::Interrupted(error)
             | Self::Nix(nix::NixError::Interrupted(error))
-            | Self::Certificates(certificates::CertificateError::Interrupted(error))
+            | Self::Certificates(certificates::error::CertificateError::Interrupted(error))
             | Self::Import(import::ImportError::Interrupted(error)) => Some(error),
             _ => None,
         };

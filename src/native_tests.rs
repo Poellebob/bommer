@@ -10,7 +10,7 @@ use std::time::Duration;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 
-use crate::bom::Validator;
+use crate::bom::validation::Validator;
 use crate::collection_context::{CollectionContext, Interrupted};
 use crate::collection_outcome::{Coverage, DiagnosticCode, Status};
 use crate::collectors::{certificates, import, nix};
@@ -356,11 +356,11 @@ fn certificate_application_targets_reject_parent_traversal_even_with_absolute_pa
 
         assert!(matches!(
             certificates::check(&job),
-            Err(certificates::CertificateError::InvalidTarget { .. })
+            Err(certificates::error::CertificateError::InvalidTarget { .. })
         ));
         assert!(matches!(
             certificates::collect(&job, &context(), &mut output),
-            Err(certificates::CertificateError::InvalidTarget { .. })
+            Err(certificates::error::CertificateError::InvalidTarget { .. })
         ));
         assert!(output.is_empty());
     }
@@ -390,11 +390,11 @@ fn certificate_nix_profile_targets_must_resolve_to_existing_store_outputs() {
 
     assert!(matches!(
         certificates::check(&job),
-        Err(certificates::CertificateError::InvalidTarget { .. })
+        Err(certificates::error::CertificateError::InvalidTarget { .. })
     ));
     assert!(matches!(
         certificates::collect(&job, &context(), &mut output),
-        Err(certificates::CertificateError::InvalidTarget { .. })
+        Err(certificates::error::CertificateError::InvalidTarget { .. })
     ));
     assert!(output.is_empty());
 }
@@ -920,7 +920,7 @@ fn native_cancellation_and_writer_errors_remain_typed() {
     let job = certificate_job(directory.path(), &["."], 4 << 20, false);
     assert!(matches!(
         certificates::collect(&job, &cancelled, &mut output),
-        Err(certificates::CertificateError::Interrupted(
+        Err(certificates::error::CertificateError::Interrupted(
             Interrupted::Cancelled
         ))
     ));
@@ -934,7 +934,7 @@ fn native_cancellation_and_writer_errors_remain_typed() {
         matches!(import::collect(&import_job(&source), &context(), &mut Broken), Err(import::ImportError::Io(error)) if error.kind() == io::ErrorKind::BrokenPipe)
     );
     assert!(
-        matches!(certificates::collect(&job, &context(), &mut Broken), Err(certificates::CertificateError::Io(error)) if error.kind() == io::ErrorKind::BrokenPipe)
+        matches!(certificates::collect(&job, &context(), &mut Broken), Err(certificates::error::CertificateError::Io(error)) if error.kind() == io::ErrorKind::BrokenPipe)
     );
 }
 

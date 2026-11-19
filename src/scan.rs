@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, atomic::AtomicBool};
 use std::time::Duration;
 
-use crate::bom::{ValidationError, Validator};
+use crate::bom::validation::{ValidationError, Validator};
 use crate::collection_context::{CollectionContext, Interrupted};
 use crate::collection_outcome::Status;
 use crate::collectors::{self, CollectionError};

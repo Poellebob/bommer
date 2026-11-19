@@ -1,13 +1,17 @@
 //! Decode configuration into validated collector jobs and run settings.
 
+pub(crate) mod document;
+pub(crate) mod duration;
+
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde::{Deserialize, Deserializer};
 use thiserror::Error;
 
+use crate::config::document::{Collector, Document, Inventory};
+use crate::config::duration::parse_duration;
 use crate::job::{Backend, InventoryKind, Job, JobError, Name, NameError, Scope, Target};
 use crate::process::CommandSpec;
 
@@ -75,130 +79,6 @@ pub(crate) enum CollectorError {
 
     #[error("invalid backend contract")]
     Contract(#[source] JobError),
-}
-
-// YAML null has the same zero-value behavior as an omitted Go configuration field.
-fn null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de> + Default,
-{
-    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct Document {
-    #[serde(deserialize_with = "null_default")]
-    version: i64,
-    #[serde(deserialize_with = "null_default")]
-    output: Output,
-    #[serde(deserialize_with = "null_default")]
-    timeout: String,
-    #[serde(deserialize_with = "null_default")]
-    host: Host,
-    #[serde(deserialize_with = "null_default")]
-    applications: Vec<Application>,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct Output {
-    #[serde(deserialize_with = "null_default")]
-    directory: String,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct Host {
-    #[serde(deserialize_with = "null_default")]
-    hbom: Collector,
-    #[serde(deserialize_with = "null_default")]
-    sbom: Collector,
-    #[serde(deserialize_with = "null_default")]
-    inventories: Vec<Inventory>,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct Application {
-    #[serde(deserialize_with = "null_default")]
-    name: String,
-    #[serde(deserialize_with = "null_default")]
-    version: String,
-    #[serde(deserialize_with = "null_default")]
-    target: RawTarget,
-    #[serde(deserialize_with = "null_default")]
-    sbom: Collector,
-    #[serde(deserialize_with = "null_default")]
-    cbom: Collector,
-    #[serde(deserialize_with = "null_default")]
-    inventories: Vec<Inventory>,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct RawTarget {
-    #[serde(rename = "type", deserialize_with = "null_default")]
-    kind: String,
-    #[serde(deserialize_with = "null_default")]
-    path: String,
-    #[serde(deserialize_with = "null_default")]
-    image: String,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct Inventory {
-    #[serde(deserialize_with = "null_default")]
-    name: String,
-    #[serde(deserialize_with = "null_default")]
-    kind: String,
-    #[serde(deserialize_with = "null_default")]
-    collector: Collector,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct Collector {
-    #[serde(deserialize_with = "null_default")]
-    enabled: bool,
-    #[serde(deserialize_with = "null_default")]
-    backend: String,
-    #[serde(deserialize_with = "null_default")]
-    command: Vec<String>,
-    #[serde(deserialize_with = "null_default")]
-    exclude: Vec<String>,
-    #[serde(deserialize_with = "null_default")]
-    respect_gitignore: bool,
-    nix: Option<NixOptions>,
-    certificates: Option<CertificateOptions>,
-    import: Option<ImportOptions>,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct NixOptions {
-    #[serde(deserialize_with = "null_default")]
-    roots: Vec<PathBuf>,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct CertificateOptions {
-    #[serde(deserialize_with = "null_default")]
-    paths: Vec<PathBuf>,
-    #[serde(deserialize_with = "null_default")]
-    max_file_bytes: i64,
-    #[serde(deserialize_with = "null_default")]
-    include_identity: bool,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct ImportOptions {
-    #[serde(deserialize_with = "null_default")]
-    path: PathBuf,
 }
 
 impl Config {
@@ -442,74 +322,4 @@ fn checked_name(value: &str, scope: &str) -> Result<Name, ConfigError> {
         name: value.into(),
         source,
     })
-}
-
-fn parse_duration(text: &str) -> Option<Duration> {
-    let mut rest = text.strip_prefix('+').unwrap_or(text);
-    let mut total = 0_u64;
-
-    while !rest.is_empty() {
-        let end = rest
-            .bytes()
-            .take_while(|byte| byte.is_ascii_digit() || *byte == b'.')
-            .count();
-        let number = &rest[..end];
-        if !number.bytes().any(|byte| byte.is_ascii_digit()) {
-            return None;
-        }
-
-        let mut parts = number.split('.');
-        let whole = parts.next()?;
-        let fraction = parts.next().unwrap_or("");
-        if parts.next().is_some() {
-            return None;
-        }
-
-        rest = &rest[end..];
-        let (unit, scale) = [
-            ("ns", 1_u64),
-            ("us", 1_000),
-            ("\u{00b5}s", 1_000),
-            ("\u{03bc}s", 1_000),
-            ("ms", 1_000_000),
-            ("s", 1_000_000_000),
-            ("m", 60_000_000_000),
-            ("h", 3_600_000_000_000),
-        ]
-        .into_iter()
-        .find(|(unit, _)| rest.starts_with(unit))?;
-        rest = &rest[unit.len()..];
-
-        let integral = if whole.is_empty() {
-            0
-        } else {
-            whole.parse::<u64>().ok()?
-        };
-        let mut nanos = integral.checked_mul(scale)?;
-
-        // Match time.ParseDuration's bounded significand and floating-point scaling.
-        let mut numerator = 0_u64;
-        let mut divisor = 1_f64;
-        for digit in fraction.bytes() {
-            if numerator > i64::MAX as u64 / 10 {
-                break;
-            }
-            let next = numerator * 10 + u64::from(digit - b'0');
-            if next > 1_u64 << 63 {
-                break;
-            }
-            numerator = next;
-            divisor *= 10.0;
-        }
-        if numerator > 0 {
-            nanos = nanos.checked_add((numerator as f64 * (scale as f64 / divisor)) as u64)?;
-        }
-
-        total = total.checked_add(nanos)?;
-        if total > i64::MAX as u64 {
-            return None;
-        }
-    }
-
-    (total > 0).then(|| Duration::from_nanos(total))
 }

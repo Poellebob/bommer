@@ -178,6 +178,8 @@ mod config_tests;
 #[cfg(test)]
 mod doctor_tests;
 #[cfg(test)]
+mod duration_tests;
+#[cfg(test)]
 mod external_tests;
 #[cfg(test)]
 mod import_tests;
@@ -187,6 +189,8 @@ mod job_tests;
 mod native_tests;
 #[cfg(test)]
 mod path_encoding_tests;
+#[cfg(test)]
+mod plan_tests;
 #[cfg(test)]
 mod process_tests;
 #[cfg(test)]

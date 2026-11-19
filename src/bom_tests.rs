@@ -6,7 +6,7 @@ use serde_json::json;
 
 use crate::bom::document::Document;
 use crate::bom::schemas::{DenyRetrieval, ResourceRefused};
-use crate::bom::{ValidationError, Validator};
+use crate::bom::validation::{ValidationError, Validator};
 use crate::json::{DecodeError, decode};
 
 fn validator() -> &'static Validator {

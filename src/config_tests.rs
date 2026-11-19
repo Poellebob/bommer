@@ -2,8 +2,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::config::{CollectorError, Config, ConfigError};
-use crate::job::{Backend, InventoryKind, JobError, Name, Target};
-use crate::plan::{Plan, PlanError, Selection};
+use crate::job::{Backend, JobError};
 
 const BASE: &str = "version: 1\noutput: {directory: /tmp/inventories}\n";
 
@@ -103,6 +102,43 @@ fn required_fields_and_io_errors_are_typed() {
         Config::load(&path).unwrap().output_directory(),
         Path::new("/tmp/inventories")
     );
+}
+
+#[test]
+fn validation_reports_the_first_error_in_configuration_order() {
+    assert!(matches!(
+        Config::parse("version: 2\ntimeout: invalid\n"),
+        Err(ConfigError::UnsupportedVersion { version: 2 })
+    ));
+    assert!(matches!(
+        Config::parse("version: 1\ntimeout: invalid\n"),
+        Err(ConfigError::MissingOutputDirectory)
+    ));
+    assert!(matches!(
+        Config::parse(&format!(
+            "{BASE}timeout: invalid\nhost: {{hbom: {{enabled: true, backend: unknown}}}}\n"
+        )),
+        Err(ConfigError::InvalidTimeout)
+    ));
+    assert!(matches!(
+        Config::parse(&format!(
+            "{BASE}host: {{hbom: {{enabled: true, backend: unknown}}}}\napplications: [{{name: '../invalid'}}]\n"
+        )),
+        Err(ConfigError::InvalidCollector { scope, .. }) if scope == "host.hbom"
+    ));
+    assert!(matches!(
+        Config::parse(&format!("{BASE}applications: [{{name: host}}]\n")),
+        Err(ConfigError::DuplicateName { .. })
+    ));
+    assert!(matches!(
+        Config::parse(&format!(
+            "{BASE}host: {{sbom: {{enabled: true, backend: syft, nix: {{}}, command: [scanner]}}}}\n"
+        )),
+        Err(ConfigError::InvalidCollector {
+            source: CollectorError::OptionsMismatch,
+            ..
+        })
+    ));
 }
 
 #[test]
@@ -379,92 +415,4 @@ fn certificates_normalize_default_and_enforce_limits() {
             None => assert!(matches!(result, Err(ConfigError::InvalidCollector { .. }))),
         }
     }
-}
-
-#[test]
-fn planning_preserves_order_metadata_and_selection() {
-    let config = Config::parse(&format!("{BASE}host:\n  hbom: {{enabled: true, backend: hbom}}\n  sbom: {{enabled: true, backend: syft}}\n  inventories:\n    - name: certs\n      kind: cbom\n      collector: {{enabled: true, backend: certificates, certificates: {{paths: [/etc/ssl]}}}}\napplications:\n  - name: api\n    version: '2.3'\n    target: {{type: container, image: example/api:2}}\n    sbom: {{enabled: true, backend: syft}}\n    cbom: {{enabled: true, backend: command, command: [scanner, '{{target}}']}}\n    inventories:\n      - name: producer\n        kind: cbom\n        collector: {{enabled: true, backend: import, import: {{path: producer.json}}}}\n")).unwrap();
-    for (kind, app, expected) in [
-        (
-            None,
-            None,
-            vec![
-                "host.hbom",
-                "host.sbom",
-                "host.certs.cbom",
-                "api.sbom",
-                "api.cbom",
-                "api.producer.cbom",
-            ],
-        ),
-        (
-            Some(InventoryKind::Cbom),
-            None,
-            vec!["host.certs.cbom", "api.cbom", "api.producer.cbom"],
-        ),
-        (
-            None,
-            Some("api"),
-            vec!["api.sbom", "api.cbom", "api.producer.cbom"],
-        ),
-        (
-            Some(InventoryKind::Cbom),
-            Some("api"),
-            vec!["api.cbom", "api.producer.cbom"],
-        ),
-    ] {
-        let selection = Selection::new(kind, app.map(|name| Name::new(name.into()).unwrap()));
-        let plan = Plan::build(&config, &selection).unwrap();
-
-        assert_eq!(
-            plan.jobs().iter().map(|job| job.stem()).collect::<Vec<_>>(),
-            expected
-        );
-    }
-
-    let job = &config.jobs()[3];
-    assert_eq!(job.scope().version(), Some("2.3"));
-    assert!(matches!(job.target(), Target::RegistryImage(image) if image == "example/api:2"));
-    assert!(matches!(config.jobs()[1].target(), Target::Host));
-
-    let Backend::Command(spec) = config.jobs()[4].backend() else {
-        panic!("expected command");
-    };
-
-    assert_eq!(spec.executable(), "scanner");
-    assert_eq!(spec.arguments(), &[std::ffi::OsString::from("{target}")]);
-}
-
-#[test]
-fn disabled_application_is_known_but_has_empty_selection() {
-    let config = Config::parse(&format!(
-        "{BASE}applications: [{{name: off, target: {{type: directory, path: /app}}}}]\n"
-    ))
-    .unwrap();
-
-    assert_eq!(
-        config
-            .applications()
-            .iter()
-            .map(Name::as_str)
-            .collect::<Vec<_>>(),
-        ["off"]
-    );
-
-    for application in [None, Some("off")] {
-        let selection = Selection::new(
-            None,
-            application.map(|name| Name::new(name.into()).unwrap()),
-        );
-
-        assert!(matches!(
-            Plan::build(&config, &selection),
-            Err(PlanError::EmptySelection)
-        ));
-    }
-
-    let selection = Selection::new(None, Some(Name::new("missing".into()).unwrap()));
-    assert!(
-        matches!(Plan::build(&config, &selection), Err(PlanError::UnknownApplication { name }) if name.as_str() == "missing")
-    );
 }
