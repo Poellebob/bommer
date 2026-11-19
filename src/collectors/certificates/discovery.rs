@@ -10,21 +10,11 @@ use rustix::fs::{Dir, Mode, OFlags, openat};
 use sha2::{Digest, Sha256};
 use x509_parser::parse_x509_certificate;
 
-use super::error::CertificateError;
 use crate::collection::context::CollectionContext;
 use crate::collection::outcome::{Diagnostic, DiagnosticCode};
+use crate::collectors::certificates::error::CertificateError;
+use crate::collectors::certificates::types::{Discovery, Observation};
 use crate::job::{Backend, Job, Target};
-
-pub(super) struct Observation {
-    pub(super) der: Vec<u8>,
-    pub(super) sources: BTreeSet<PathBuf>,
-}
-
-pub(super) struct Discovery {
-    pub(super) target: Option<PathBuf>,
-    pub(super) observations: BTreeMap<String, Observation>,
-    pub(super) diagnostics: Vec<Diagnostic>,
-}
 
 struct Scan<'a> {
     context: &'a CollectionContext,
@@ -90,7 +80,7 @@ fn open_code(error: &io::Error) -> DiagnosticCode {
     }
 }
 
-pub(super) fn configured_paths(
+pub(in crate::collectors::certificates) fn configured_paths(
     job: &Job,
     target: Option<&Path>,
 ) -> Result<Vec<PathBuf>, CertificateError> {
@@ -118,7 +108,9 @@ pub(super) fn configured_paths(
         .collect()
 }
 
-pub(super) fn resolve_target(job: &Job) -> Result<Option<PathBuf>, CertificateError> {
+pub(in crate::collectors::certificates) fn resolve_target(
+    job: &Job,
+) -> Result<Option<PathBuf>, CertificateError> {
     if job.scope.is_host() {
         Ok(None)
     } else {
@@ -354,7 +346,7 @@ impl Scan<'_> {
     }
 }
 
-pub(super) fn discover(
+pub(in crate::collectors::certificates) fn discover(
     job: &Job,
     context: &CollectionContext,
     entry_limit: usize,

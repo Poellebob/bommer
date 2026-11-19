@@ -39,7 +39,7 @@ against embedded schemas offline; schema validity does not prove inventory
 completeness. Partial results are retained but cause exit code `1`.
 Manifest v2 retains human-readable `error` text and adds structured `failure`
 details for automation. Filesystem paths in JSON use a lossless tagged form when
-needed; see `model::path_text` in source.
+needed; see `path_encoding::path_text` in source.
 
 ## Development
 
@@ -66,12 +66,15 @@ also used by `just deb` and `just rpm` through nFPM. Native packages use a stati
 x86_64 musl executable with no Nix-store loader dependency. The Nix package uses
 its native GNU toolchain. Installed-package and distro testing remain release work.
 
+Unit tests live inline in their owner modules; `tests/architecture.rs` checks
+cross-repository boundaries and `tests/cli.rs` tests the executable as a black box.
 Tests do not require Nix or select a host closure automatically. Rust native tests
 use fixtures and fake Nix executables; `just integration-test` does not run live
 Nix, even when `BOMMER_TEST_NIX_ROOT` is set. Any live check must be explicitly
-requested with an existing local closure root; the reference Go live test uses
-`BOMMER_TEST_NIX_ROOT`. Live Rust/Go parity and the supported OS matrix remain
-verification work, not claims made by the native test suite.
+requested with an existing local closure root. The removed Go prototype's
+`BOMMER_TEST_NIX_ROOT` gate does not enable Rust tests. Historical Go parity and
+the supported OS matrix remain verification work, not claims made by the native
+test suite.
 
 ## Further Reading
 

@@ -19,6 +19,11 @@ Run `just` to list recipes, `just fmt` to format Rust files, or `just test` to r
 behavioral and black-box CLI tests. `just check` includes strict Clippy and the
 source-level architecture check. See the [style guide](STYLE.md).
 
+Unit tests are inline in the modules that own the behavior. Cross-repository
+dependency and implementation-ownership checks are in `tests/architecture.rs`;
+black-box executable tests are in `tests/cli.rs`. `just architecture-test` runs
+the architecture integration target, not a binary-module test filter.
+
 The shell provides overlay-managed Rust, Go for reference, just, Syft, Nix, and nFPM. `hbom` and custom command collectors
 must be provisioned separately. The native `certificates` and `import` backends
 need no external scanner; `nix` needs a local Nix executable and existing store.
@@ -28,9 +33,10 @@ collector version pinning remains to be implemented.
 `just schema-test` exercises embedded official schemas, strict decoding, and
 offline resolution. `just integration-test` runs collector, process, scan,
 import, and CLI fixtures. Native Nix tests use fake tools and metadata; they do
-not select a host closure or perform live queries. `BOMMER_TEST_NIX_ROOT` gates
-only the retained Go reference test, not Rust tests. Live checks must be explicitly
-requested with an existing local closure, never an installable or discovered root.
+not select a host closure or perform live queries. `BOMMER_TEST_NIX_ROOT` was a
+gate in the removed Go prototype and does not enable Rust tests. Live checks must
+be explicitly requested with an existing local closure, never an installable or
+discovered root.
 `just portable-test` runs the suite against the musl native-package target.
 
 ## Configuration
@@ -253,7 +259,7 @@ Failures additionally carry a structured `failure` object with stable `kind` and
 applicable `exitCode`, `stream`, and `limit` fields. Human-readable `error` wording
 is not a consumer interface. Effective scope is retained for successful and failed
 external executions. Non-UTF-8 filesystem paths use tagged hex rather than lossy
-replacement; see `model::path_text` in source.
+replacement; see `path_encoding::path_text` in source.
 
 | Status | Meaning |
 | --- | --- |
@@ -270,8 +276,11 @@ Named artifacts use `<name>.<inventory>.<kind>.cdx.json`; legacy artifacts retai
 `<name>.<kind>.cdx.json`, with matching `.stderr.log` names.
 
 Exit codes: `0` collected/no-findings/ready, `1` any partial result or
-execution/preflight/validation failure, `2` usage or
-configuration error. Each collector has a positive timeout (default `10m`).
+execution/preflight/validation failure or operational scan error, `2` usage,
+configuration, or selection error (including invalid/unknown applications, empty
+selections, and artifact-name collisions). `main` owns this policy; persistence
+and collectors do not choose CLI exit codes. Each collector has a positive
+timeout (default `10m`).
 Signals and timeouts kill its process group. Scans do not install dependencies,
 escalate privileges, or automatically execute application workloads. Custom
 collectors are trusted and can execute whatever is explicitly configured.

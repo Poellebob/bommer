@@ -326,3 +326,184 @@ pub(crate) fn closure_document(
 
     Ok((document, entries.len()))
 }
+
+#[cfg(test)]
+mod tests {
+
+    use crate::bom::validation::Validator;
+    use crate::collection::context::CollectionContext;
+    use crate::collectors::nix;
+    use crate::job::{Backend, InventoryKind, Job, Name, Scope, Target};
+    use serde_json::{Value, json};
+    use std::path::Path;
+    use std::sync::{Arc, atomic::AtomicBool};
+    use std::time::Duration;
+    const APP: &str = "/nix/store/00000000000000000000000000000000-app-with-dashes-1.2-bin";
+    const LIB: &str = "/nix/store/11111111111111111111111111111111-library-2-dev";
+
+    fn context() -> CollectionContext {
+        CollectionContext::new(Duration::from_secs(10), Arc::new(AtomicBool::new(false)))
+    }
+
+    fn nix_job() -> Job {
+        Job::new(
+            Scope::Application {
+                name: Name::new("app".into()).unwrap(),
+                version: Some("1.2".into()),
+            },
+            None,
+            InventoryKind::Sbom,
+            Target::NixClosure(APP.into()),
+            Backend::Nix { roots: vec![] },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn nix_current_and_legacy_metadata_preserve_graph_and_nar_semantics() {
+        let hash = "sha256-7bO3fpkymZrnfW2Z6uxcYwBALxPVrZ9msGQrTG1MNZo=";
+        let current = json!({APP:{"narHash":hash,"narSize":96,"references":[LIB,APP,LIB],"version":1},LIB:{"narHash":hash,"narSize":205456,"references":[],"version":1}});
+        let legacy = json!([{"path":LIB,"narHash":hash,"narSize":205456,"references":[]},{"path":APP,"narHash":hash,"narSize":96,"references":[APP,LIB]}]);
+        let mut results = Vec::new();
+
+        for metadata in [current, legacy] {
+            let (document, findings) = nix::closure_document(
+                &serde_json::to_vec(&metadata).unwrap(),
+                &[APP.into()],
+                &nix_job(),
+                "nix (Nix) 2.34.8",
+            )
+            .unwrap();
+
+            assert_eq!(findings, 2);
+            let mut output = Vec::new();
+            document.write(&mut output).unwrap();
+            let summary = Validator::new().unwrap().validate(&output, false).unwrap();
+            assert_eq!(summary.component_count, 2);
+            let document: Value = serde_json::from_slice(&output).unwrap();
+            assert_eq!(document["components"].as_array().unwrap().len(), 2);
+            assert_eq!(
+                document["metadata"]["component"],
+                json!({"type":"file", "name":"app", "version":"1.2", "bom-ref":"bommer:inventory:app.sbom"})
+            );
+            assert_eq!(
+                document["dependencies"],
+                json!([{"ref":APP,"dependsOn":[APP,LIB]},{"ref":LIB,"dependsOn":[]},{"ref":"bommer:inventory:app.sbom","dependsOn":[APP]}])
+            );
+
+            let component = &document["components"][0];
+            assert_eq!(component["name"], "app-with-dashes-1.2-bin");
+            assert!(component.get("version").is_none());
+            assert!(component.get("hashes").is_none());
+            assert_eq!(
+                component["properties"][1],
+                json!({"name":"bommer:nix:nar-hash","value":hash})
+            );
+            assert_eq!(
+                component["properties"][2],
+                json!({"name":"bommer:nix:nar-size","value":"96"})
+            );
+            results.push(output);
+        }
+
+        assert_eq!(results[0], results[1]);
+    }
+
+    #[test]
+    fn nix_query_contract_is_explicitly_local_offline_and_versioned() {
+        for (version, format_flag) in [
+            ("nix (Nix) 2.18.9", false),
+            ("nix (Nix) 2.34.8", true),
+            ("nix (Nix) 3.0pre", true),
+        ] {
+            let (arguments, store) =
+                nix::query_arguments(version, &[APP.into(), LIB.into()]).unwrap();
+
+            assert!(matches!(
+                store,
+                "local" | "unix:///nix/var/nix/daemon-socket/socket"
+            ));
+            let mut expected: Vec<std::ffi::OsString> = [
+                "--extra-experimental-features",
+                "nix-command",
+                "path-info",
+                "--store",
+                store,
+                "--offline",
+                "--recursive",
+                "--json",
+            ]
+            .into_iter()
+            .map(Into::into)
+            .collect();
+            if format_flag {
+                expected.extend(["--json-format".into(), "1".into()]);
+            }
+            expected.extend([APP.into(), LIB.into()]);
+            assert_eq!(arguments, expected);
+        }
+
+        for version in [
+            "unexpected fork",
+            "nix (Nix) 2",
+            "nix (Nix) +2.34",
+            "nix (Nix) 2.x",
+            "nix (Nix) 2.34\ninjected",
+        ] {
+            assert!(matches!(
+                nix::query_arguments(version, &[APP.into()]),
+                Err(nix::NixError::InvalidVersion)
+            ));
+        }
+    }
+
+    #[test]
+    fn nix_rejects_missing_roots_and_incomplete_or_malformed_metadata() {
+        let valid = json!({"narHash":"sha256:0000000000000000000000000000000000000000000000000000","narSize":0,"references":[]});
+
+        for (field, replacement) in [
+            ("narHash", json!("sha256-invalid")),
+            ("narSize", json!(-1)),
+            ("narSize", Value::Null),
+            ("references", Value::Null),
+            ("version", json!(2)),
+            ("deriver", json!("invalid")),
+        ] {
+            let mut info = valid.clone();
+            info[field] = replacement;
+            let data = serde_json::to_vec(&json!({APP:info})).unwrap();
+
+            assert!(matches!(
+                nix::closure_document(&data, &[APP.into()], &nix_job(), "nix (Nix) 2.34.8"),
+                Err(nix::NixError::InvalidMetadata)
+            ));
+        }
+
+        let mut incomplete = valid.clone();
+        incomplete["references"] = json!([LIB]);
+
+        assert!(
+            matches!(nix::closure_document(&serde_json::to_vec(&json!({APP:incomplete})).unwrap(), &[APP.into()], &nix_job(), "nix (Nix) 2.34.8"), Err(nix::NixError::IncompleteClosure { missing }) if missing == Path::new(LIB))
+        );
+        assert!(
+            matches!(nix::closure_document(&serde_json::to_vec(&json!({LIB:valid})).unwrap(), &[APP.into()], &nix_job(), "nix (Nix) 2.34.8"), Err(nix::NixError::IncompleteClosure { missing }) if missing == Path::new(APP))
+        );
+
+        let directory = tempfile::tempdir().unwrap();
+        let job = Job::new(
+            Scope::Host,
+            None,
+            InventoryKind::Sbom,
+            Target::Host,
+            Backend::Nix {
+                roots: vec![directory.path().into()],
+            },
+        )
+        .unwrap();
+
+        assert!(matches!(
+            nix::collect(&job, &context(), &mut Vec::new()),
+            Err(nix::NixError::InvalidRoot { .. })
+        ));
+    }
+}

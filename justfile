@@ -26,24 +26,26 @@ portable-test:
 
 # Test embedded CycloneDX schemas, fixtures, and offline validation.
 schema-test:
-    cargo test --locked --bin bommer bom_tests::
+    cargo test --locked --bin bommer bom::
+    cargo test --locked --bin bommer json::tests::
 
 # Run integration fixtures with fake collectors/Nix, not live host inventory.
 integration-test:
-    cargo test --locked --bin bommer job_tests:: -- --nocapture
-    cargo test --locked --bin bommer external_tests:: -- --nocapture
-    cargo test --locked --bin bommer native_tests:: -- --nocapture
-    cargo test --locked --bin bommer import_tests:: -- --nocapture
+    cargo test --locked --bin bommer job::tests:: -- --nocapture
+    cargo test --locked --bin bommer collectors::external::tests:: -- --nocapture
+    cargo test --locked --bin bommer collectors::certificates::tests:: -- --nocapture
+    cargo test --locked --bin bommer collectors::nix::tests:: -- --nocapture
+    cargo test --locked --bin bommer collectors::import::tests:: -- --nocapture
     cargo test --locked --test cli
-    cargo test --locked --bin bommer process_tests:: -- --nocapture
-    cargo test --locked --bin bommer doctor_tests:: -- --nocapture
-    cargo test --locked --bin bommer scan_tests:: -- --nocapture
-    cargo test --locked --bin bommer output_tests:: -- --nocapture
-    cargo test --locked --bin bommer manifest_tests:: -- --nocapture
+    cargo test --locked --bin bommer process::tests:: -- --nocapture
+    cargo test --locked --bin bommer doctor::tests:: -- --nocapture
+    cargo test --locked --bin bommer scan::tests:: -- --nocapture
+    cargo test --locked --bin bommer output::tests:: -- --nocapture
+    cargo test --locked --bin bommer manifest::tests:: -- --nocapture
 
 # Check module dependency direction and the architecture checker fixtures.
 architecture-test:
-    cargo test --locked --bin bommer architecture_tests::
+    cargo test --locked --test architecture
 
 # Run all source checks and tests.
 check: fmt-check vet test

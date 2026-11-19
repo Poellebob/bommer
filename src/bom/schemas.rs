@@ -138,3 +138,32 @@ impl CompiledSchema {
         components.len()
     }
 }
+
+#[cfg(test)]
+mod tests {
+
+    use crate::bom::schemas::{DenyRetrieval, ResourceRefused};
+    use jsonschema::Retrieve;
+    use serde_json::json;
+    #[test]
+    fn retriever_denies_all_nonregistered_resources() {
+        for uri in [
+            "http://127.0.0.1:1/evil.json",
+            "https://attacker.invalid/schema.json",
+            "file:///etc/passwd",
+            "http://cyclonedx.org/schema/bom-1.5.schema.json",
+        ] {
+            let error = DenyRetrieval
+                .retrieve(&jsonschema::Uri::parse(uri.to_owned()).unwrap())
+                .unwrap_err();
+
+            assert_eq!(error.downcast_ref::<ResourceRefused>().unwrap().uri, uri);
+            assert!(
+                jsonschema::options()
+                    .with_retriever(DenyRetrieval)
+                    .build(&json!({"$ref":uri}))
+                    .is_err()
+            );
+        }
+    }
+}

@@ -8,16 +8,11 @@ use x509_parser::{
     x509::AlgorithmIdentifier,
 };
 
-use super::discovery::Observation;
-use super::error::CertificateError;
 use crate::bom::document::Document;
 use crate::collection::context::CollectionContext;
+use crate::collectors::certificates::error::CertificateError;
+use crate::collectors::certificates::types::{Assets, Observation};
 use crate::path_encoding::path_text;
-
-pub(super) struct Assets {
-    pub(super) document: Document,
-    pub(super) evidence: Value,
-}
 
 fn algorithm(
     algorithms: &mut BTreeMap<String, Value>,
@@ -80,7 +75,7 @@ fn signature_name(identifier: &AlgorithmIdentifier<'_>) -> &'static str {
     }
 }
 
-pub(super) fn build(
+pub(in crate::collectors::certificates) fn build(
     observations: &BTreeMap<String, Observation>,
     include_identity: bool,
     context: &CollectionContext,

@@ -30,6 +30,9 @@ struct SourceGraph {
     modules: BTreeMap<Name, usize>,
     scopes: Vec<Scope>,
     paths: Vec<(usize, Name)>,
+    types: BTreeSet<Name>,
+    type_aliases: BTreeMap<Name, (usize, Name)>,
+    impls: Vec<(usize, Name)>,
 }
 
 fn test_only(attrs: &[syn::Attribute]) -> bool {
@@ -207,6 +210,33 @@ impl SourceGraph {
     ) -> Result<(), String> {
         let scope = self.scope(name.clone(), None, &items);
         self.modules.insert(name.clone(), scope);
+
+        for item in items.iter().filter(|item| !skipped(item)) {
+            if matches!(item, syn::Item::Struct(_) | syn::Item::Enum(_)) {
+                let mut owner = name.clone();
+                owner.push(item_name(item).unwrap());
+                self.types.insert(owner);
+            }
+            if let syn::Item::Type(alias) = item
+                && let syn::Type::Path(ty) = alias.ty.as_ref()
+                && ty.qself.is_none()
+                && ty.path.leading_colon.is_none()
+            {
+                let mut owner = name.clone();
+                owner.push(alias.ident.to_string());
+                self.type_aliases.insert(
+                    owner,
+                    (
+                        scope,
+                        ty.path
+                            .segments
+                            .iter()
+                            .map(|part| part.ident.to_string())
+                            .collect(),
+                    ),
+                );
+            }
+        }
 
         for item in &items {
             if skipped(item) {
@@ -432,6 +462,27 @@ impl SourceGraph {
 
         edges
     }
+
+    fn misplaced_impls(&self) -> BTreeSet<(Name, Name)> {
+        self.impls
+            .iter()
+            .filter_map(|(scope, path)| {
+                let mut target =
+                    self.resolve(*scope, path, &mut BTreeSet::new(), &mut BTreeSet::new())?;
+                let mut seen = BTreeSet::new();
+                while let Some((scope, path)) = self.type_aliases.get(&target) {
+                    if !seen.insert(target.clone()) {
+                        return None;
+                    }
+                    target =
+                        self.resolve(*scope, path, &mut BTreeSet::new(), &mut BTreeSet::new())?;
+                }
+                let source = &self.scopes[*scope].module;
+                (self.types.contains(&target) && source != &target[..target.len() - 1])
+                    .then(|| (source.clone(), target))
+            })
+            .collect()
+    }
 }
 
 struct Paths<'a> {
@@ -452,6 +503,24 @@ impl<'ast> Visit<'ast> for Paths<'_> {
     fn visit_item_mod(&mut self, _: &'ast syn::ItemMod) {}
 
     fn visit_item_use(&mut self, _: &'ast syn::ItemUse) {}
+
+    fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+        if let syn::Type::Path(ty) = item.self_ty.as_ref()
+            && ty.qself.is_none()
+            && ty.path.leading_colon.is_none()
+        {
+            self.graph.impls.push((
+                self.scope,
+                ty.path
+                    .segments
+                    .iter()
+                    .map(|part| part.ident.to_string())
+                    .collect(),
+            ));
+        }
+
+        visit::visit_item_impl(self, item);
+    }
 
     fn visit_path(&mut self, path: &'ast syn::Path) {
         // Leading :: denotes an external crate in Rust 2018+, not this crate.
@@ -528,6 +597,60 @@ fn violations(edges: &Edges) -> BTreeSet<Violation> {
     errors
 }
 
+fn layer_violations(edges: &Edges) -> Edges {
+    let mut errors = Edges::new();
+
+    for (source, target) in edges {
+        let forbidden: &[&str] = match source.first().map(String::as_str) {
+            Some("doctor") => &["scan", "output", "manifest"],
+            Some("scan") => &["config", "plan"],
+            Some("manifest") => &["output"],
+            Some("collectors" | "backend") => &[
+                "main", "cli", "scan", "config", "plan", "output", "manifest",
+            ],
+            Some("collection") => &[
+                "main",
+                "cli",
+                "scan",
+                "doctor",
+                "collectors",
+                "backend",
+                "process",
+                "config",
+                "plan",
+                "output",
+                "manifest",
+            ],
+            Some("process") => {
+                if !target.starts_with(&name("process")) {
+                    errors.insert((source.clone(), target.clone()));
+                }
+                continue;
+            }
+            _ => continue,
+        };
+
+        let mut pending = vec![target];
+        let mut seen = BTreeSet::new();
+        while let Some(node) = pending.pop() {
+            if !seen.insert(node) {
+                continue;
+            }
+            let layer = node.first().map_or("main", String::as_str);
+            if forbidden.contains(&layer) {
+                errors.insert((source.clone(), node.clone()));
+            }
+            pending.extend(
+                edges
+                    .iter()
+                    .filter_map(|(from, to)| (from == node).then_some(to)),
+            );
+        }
+    }
+
+    errors
+}
+
 #[test]
 fn production_dependencies_have_no_ancestors_or_cycles() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs");
@@ -537,6 +660,8 @@ fn production_dependencies_have_no_ancestors_or_cycles() {
     .expect("parse production module tree");
 
     assert_eq!(violations(&graph.edges()), BTreeSet::new());
+    assert_eq!(graph.misplaced_impls(), BTreeSet::new());
+    assert_eq!(layer_violations(&graph.edges()), BTreeSet::new());
 }
 
 fn name(path: &str) -> Name {
@@ -821,4 +946,235 @@ fn follows_flat_directory_inline_and_explicit_path_modules() {
             ("inline::child", "renamed"),
         ])
     );
+}
+
+#[test]
+fn inherent_and_trait_impls_stay_with_the_struct_or_enum_owner() {
+    let graph = fixture(&[
+        (
+            "src/main.rs",
+            r#"
+            mod owner;
+            mod facade { pub use crate::owner::{Record as Export, State}; }
+            mod inherent;
+            mod traits;
+            mod aliases {
+                type LocalAlias = crate::facade::Export<u16>;
+                type AliasChain = LocalAlias;
+                impl AliasChain {}
+            }
+            mod inline {
+                impl crate::owner::Record<u8> {}
+            }
+            "#,
+        ),
+        (
+            "src/owner.rs",
+            r#"
+            pub struct Record<T>(T);
+            pub enum State { Ready }
+            impl<T> Record<T> {}
+            impl std::fmt::Display for State {}
+            #[cfg(test)] mod tests {
+                impl crate::facade::Export<u8> {}
+            }
+            "#,
+        ),
+        (
+            "src/inherent.rs",
+            r#"
+            use crate::facade::Export as Alias;
+            impl<T> Alias<T> {}
+            fn helper() {
+                use crate::facade::*;
+                impl State {}
+            }
+            "#,
+        ),
+        (
+            "src/traits.rs",
+            r#"
+            use crate::facade::*;
+            impl std::fmt::Display for Export<u8> {}
+            impl std::fmt::Display for State {}
+            #[cfg(test)] impl crate::owner::Record<u16> {}
+            "#,
+        ),
+    ]);
+
+    assert_eq!(
+        graph.misplaced_impls(),
+        [
+            (name("aliases"), name("owner::Record")),
+            (name("inline"), name("owner::Record")),
+            (name("inherent"), name("owner::Record")),
+            (name("inherent"), name("owner::State")),
+            (name("traits"), name("owner::Record")),
+            (name("traits"), name("owner::State")),
+        ]
+        .into_iter()
+        .collect()
+    );
+}
+
+#[test]
+fn inline_child_cannot_implement_its_parents_type_even_in_the_same_file() {
+    let graph = fixture(&[(
+        "src/main.rs",
+        r#"
+        mod owner {
+            pub struct Record;
+            mod child { impl super::Record {} }
+        }
+        "#,
+    )]);
+
+    assert_eq!(
+        graph.misplaced_impls(),
+        [(name("owner::child"), name("owner::Record"))]
+            .into_iter()
+            .collect()
+    );
+}
+
+#[test]
+fn local_impls_and_external_types_are_not_misplaced() {
+    let graph = fixture(&[(
+        "src/main.rs",
+        r#"
+        struct Root;
+        impl Root {}
+        mod owner {
+            pub struct Record;
+            pub enum State { Ready }
+            impl Record {}
+            impl std::fmt::Display for Record {}
+            impl State {}
+            impl std::fmt::Display for State {}
+            struct Vec;
+            impl ::std::vec::Vec<u8> {}
+            use std::vec::Vec as External;
+            impl External<u8> {}
+        }
+        "#,
+    )]);
+
+    assert!(graph.misplaced_impls().is_empty());
+}
+
+#[test]
+fn critical_layers_reject_dependencies_including_descendant_modules() {
+    for (source, forbidden) in [
+        ("doctor", vec!["scan", "output", "manifest"]),
+        ("scan", vec!["config", "plan"]),
+        ("manifest", vec!["output"]),
+        (
+            "collectors",
+            vec!["cli", "scan", "config", "plan", "output", "manifest"],
+        ),
+        (
+            "backend",
+            vec!["cli", "scan", "config", "plan", "output", "manifest"],
+        ),
+        (
+            "collection",
+            vec![
+                "cli",
+                "scan",
+                "doctor",
+                "collectors",
+                "backend",
+                "process",
+                "config",
+                "plan",
+                "output",
+                "manifest",
+            ],
+        ),
+        (
+            "process",
+            vec!["job", "collection", "json", "path_encoding"],
+        ),
+    ] {
+        for target in forbidden {
+            let source_text = format!(
+                "mod {source} {{ mod leaf {{ use crate::{target}::nested::Item as Alias; }} }}
+                 mod {target} {{ pub mod nested {{ pub struct Item; }} }}"
+            );
+            let graph = fixture(&[("src/main.rs", &source_text)]);
+            assert_eq!(
+                layer_violations(&graph.edges()),
+                expected_edges(&[(&format!("{source}::leaf"), &format!("{target}::nested"),)]),
+                "{source} must not depend on {target}"
+            );
+        }
+    }
+}
+
+#[test]
+fn cli_root_and_transitive_facades_cannot_bypass_layer_rules() {
+    for source in ["collectors", "backend", "collection", "process"] {
+        let text = format!("struct Args; mod {source} {{ fn run(_: crate::Args) {{}} }}");
+        let graph = fixture(&[("src/main.rs", &text)]);
+        assert_eq!(
+            layer_violations(&graph.edges()),
+            expected_edges(&[(source, "main")])
+        );
+    }
+
+    let graph = fixture(&[(
+        "src/main.rs",
+        r#"
+        mod doctor { use crate::facade::Export; }
+        mod facade { pub use crate::scan::Work as Export; }
+        mod scan { pub struct Work; }
+        "#,
+    )]);
+    assert_eq!(
+        layer_violations(&graph.edges()),
+        expected_edges(&[("doctor", "scan")])
+    );
+
+    let graph = fixture(&[(
+        "src/main.rs",
+        r#"
+        mod doctor { fn check() { crate::bridge::check(); } }
+        mod bridge { pub fn check() { crate::scan::run(); } }
+        mod scan { pub fn run() {} }
+        "#,
+    )]);
+    assert_eq!(
+        layer_violations(&graph.edges()),
+        expected_edges(&[("doctor", "scan")])
+    );
+}
+
+#[test]
+fn readiness_can_reach_process_and_lower_layers_can_share_data() {
+    let graph = fixture(&[(
+        "src/main.rs",
+        r#"
+        mod doctor { use crate::collectors::check; }
+        mod collectors {
+            pub fn check() { crate::process::check(); }
+            mod backend {
+                use crate::job::Job;
+                use crate::collection::outcome::Outcome;
+            }
+        }
+        mod process {
+            pub fn check() {}
+            mod internal { pub fn helper() {} }
+            fn run() { internal::helper(); }
+        }
+        mod job { pub struct Job; }
+        mod collection {
+            pub mod outcome { pub struct Outcome; }
+            #[cfg(test)] mod tests { use crate::scan::run; }
+        }
+        mod scan { pub fn run() {} }
+        "#,
+    )]);
+
+    assert!(layer_violations(&graph.edges()).is_empty());
 }

@@ -6,22 +6,46 @@ Bommer is one Cargo package with one binary. Keep the dependency graph in
 `docs/IMPLEMENTATION.md` acyclic. A module never depends on its parent or any ancestor,
 including through qualified paths, aliases, callbacks, or shared types. Parents
 compose children. Children return results instead of calling their coordinator.
-Tests belong in independent sibling modules, not nested modules importing a parent.
+Module containment is not a dependency. These production boundaries exclude
+test-only code: unit tests belong in inline `#[cfg(test)] mod tests` in their owner
+modules. Cross-repository architecture checks belong in `tests/architecture.rs`;
+black-box executable tests belong in `tests/cli.rs`.
 
-Shared domain contracts belong in `model`. Leaf modules own their own specialized
-types. Do not introduce a trait hierarchy, plugin framework, or generic abstraction
-without a concrete second use. Changes to dependency direction must be documented.
-Strict JSON decoding belongs in the independent root `json` module, shared by BOM
-validation and import. `main` may compose `model` contracts. The collectors parent
-may depend on `process` to classify typed error sources into `model::Failure`;
-neither error classification nor persistence should parse `Display` strings.
+Use composition and abstraction to expose cohesive responsibilities, not to split
+code mechanically. Group related modules under meaningful namespaces: `collection`
+owns `context`, `outcome`, and `failure`; `config` owns `document` and `duration`;
+`bom` owns `document`, `validation`, and `schemas`. Do not introduce a trait
+hierarchy, plugin framework, or generic abstraction without a concrete second use.
+Changes to dependency direction must be documented.
+
+Shared contracts have explicit module owners, not a catch-all model or an
+implementation module that peers must import. `job` owns job contracts;
+`collection::context`, `collection::outcome`, and `collection::failure` own
+execution and result contracts; `manifest` owns reporting contracts.
+`collectors::certificates::types` owns the shared `Observation`, `Discovery`, and
+`Assets` contracts; `assets` and `discovery` own the operations using them.
+Keep every inherent and trait `impl` for a project type in the file and module
+that defines that type, never in a consumer or child module.
+
+Use explicit `crate::...` imports for internal owners, including siblings and
+test imports; do not use `use super` or `use super::*`. Strict JSON decoding
+belongs in the independent root `json` module, shared by BOM validation and
+import. The collectors parent may depend on `process` to classify typed error
+sources into `collection::failure::Failure`; neither error classification nor
+persistence should parse `Display` strings. `scan` accepts jobs, an output root,
+and a timeout rather than depending on `config` or `plan`. `manifest` does not
+depend on `output`; `doctor` does not depend on scan execution or persistence.
 
 ## Interfaces
 
-Use structs, enums, and `impl` blocks to expose small operations with private data.
+Use structs, enums, and owner-local `impl` blocks to expose meaningful operations.
+Do not add mechanical getters and setters around ordinary data; use directly
+accessible fields where no invariant or resource ownership needs protection.
 Constructors enforce invariants; do not expose mutable fields that bypass them.
-Use enums for finite states and error categories. Prefer operations to getters when
-the operation hides a meaningful implementation detail. Do not obscure orchestration:
+Read-only accessors are justified for validated values such as `Name` and a
+`CommandSpec` executable, and for owned output resources such as a `RunOutput`
+directory. These are not a reason to wrap every field. Use enums for finite states
+and error categories. Do not obscure orchestration:
 scan execution should read as collection, validation, publication, and recording.
 
 Keep errors typed across boundaries, preserving useful structured context and source
@@ -31,7 +55,7 @@ Manifest v2's additive `failure` object exposes a stable `kind` and applicable
 `exitCode`, `stream`, and `limit` fields. Preserve human-readable `error` text, but
 assert structured fields rather than wording.
 
-Use `model::path_text` for filesystem paths represented in JSON. Valid UTF-8 is
+Use `path_encoding::path_text` for filesystem paths represented in JSON. Valid UTF-8 is
 unchanged except that literals starting with `bommer:unix-bytes:` or `bommer:utf8:`
 are escaped as `bommer:utf8:<literal>`. Invalid UTF-8 paths are represented as
 `bommer:unix-bytes:<hex>` for the entire original byte sequence. Do not use lossy

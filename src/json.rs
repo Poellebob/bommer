@@ -215,3 +215,105 @@ impl Parser<'_> {
         Err(self.invalid())
     }
 }
+
+#[cfg(test)]
+mod tests {
+
+    use crate::bom::validation::{ValidationError, Validator};
+    use crate::json::{DecodeError, decode};
+    use serde_json::json;
+    use std::sync::OnceLock;
+    fn validator() -> &'static Validator {
+        static VALIDATOR: OnceLock<Validator> = OnceLock::new();
+
+        VALIDATOR.get_or_init(|| Validator::new().expect("embedded schemas compile offline"))
+    }
+
+    #[test]
+    fn duplicate_keys_are_typed_and_escape_aware() {
+        for input in [
+            r#"{"name":null,"name":"safe"}"#,
+            r#"{"outer":[{"name":"secret","na\u006de":"safe"}]}"#,
+            r#"{"outer":{"\u006eame":1,"name":2}}"#,
+        ] {
+            assert_eq!(
+                decode(input.as_bytes()),
+                Err(DecodeError::DuplicateKey {
+                    key: "name".to_owned()
+                })
+            );
+            assert!(
+                matches!(validator().validate(input.as_bytes(), false), Err(ValidationError::Decode(DecodeError::DuplicateKey { key })) if key == "name")
+            );
+        }
+
+        assert_eq!(
+            decode(br#"{"a":1,"b":{"a":2},"c":{"a":3}}"#).unwrap(),
+            json!({"a":1,"b":{"a":2},"c":{"a":3}})
+        );
+    }
+
+    #[test]
+    fn rejects_trailing_documents_and_malformed_json() {
+        for input in ["{} {}", "{} null", "{} garbage", "null true"] {
+            assert_eq!(
+                decode(input.as_bytes()),
+                Err(DecodeError::MultipleDocuments)
+            );
+        }
+
+        for input in [
+            "",
+            "{",
+            "[",
+            r#"{"x":1,}"#,
+            "[1,]",
+            "[1 2]",
+            r#"{"x" 1}"#,
+            "01",
+            "1e",
+            "NaN",
+            r#""\uD800""#,
+            "\"unterminated",
+            "[truefalse]",
+            "[\u{b}]",
+            r#"{"x":}"#,
+        ] {
+            assert!(
+                matches!(
+                    decode(input.as_bytes()),
+                    Err(DecodeError::InvalidJson { .. })
+                ),
+                "{input:?}"
+            );
+        }
+
+        assert!(matches!(
+            decode(b"\"\xff\""),
+            Err(DecodeError::InvalidJson { .. })
+        ));
+
+        assert_eq!(
+            decode(b" \n [true, false, null, -1.5e2, \"a\\\"b\"]\t").unwrap(),
+            json!([true, false, null, -150.0, "a\"b"])
+        );
+    }
+
+    #[test]
+    fn depth_limit_is_explicit_and_exceeds_serde_default() {
+        let accepted = format!("{}0{}", "[".repeat(512), "]".repeat(512));
+        assert!(decode(accepted.as_bytes()).is_ok());
+
+        let rejected = format!("{}0{}", "[".repeat(513), "]".repeat(513));
+        assert_eq!(
+            decode(rejected.as_bytes()),
+            Err(DecodeError::DepthExceeded { limit: 512 })
+        );
+
+        let rejected = format!("{}{}", "[".repeat(514), "]".repeat(514));
+        assert_eq!(
+            decode(rejected.as_bytes()),
+            Err(DecodeError::DepthExceeded { limit: 512 })
+        );
+    }
+}
