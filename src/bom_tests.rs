@@ -31,8 +31,8 @@ fn accepts_both_versions_and_counts_components() {
     ] {
         let summary = validator().validate(input.as_bytes(), true).unwrap();
 
-        assert_eq!(summary.spec_version(), version);
-        assert_eq!(summary.component_count(), count);
+        assert_eq!(summary.version, version);
+        assert_eq!(summary.component_count, count);
     }
 }
 
@@ -136,8 +136,8 @@ fn validates_schema_defined_component_nesting_beyond_128_json_levels() {
 
         let summary = validator().validate(input.as_bytes(), true).unwrap();
 
-        assert_eq!(summary.spec_version(), spec);
-        assert_eq!(summary.component_count(), 71);
+        assert_eq!(summary.version, spec);
+        assert_eq!(summary.component_count, 71);
     }
 }
 
@@ -176,10 +176,7 @@ fn native_empty_inventories_are_allowed_but_external_ones_are_not() {
             let bytes = serde_json::to_vec(&input).unwrap();
 
             assert_eq!(
-                validator()
-                    .validate(&bytes, false)
-                    .unwrap()
-                    .component_count(),
+                validator().validate(&bytes, false).unwrap().component_count,
                 0
             );
             assert!(matches!(
@@ -231,8 +228,8 @@ fn external_inventory_requires_top_level_components_even_with_nested_inventory()
             let bytes = serde_json::to_vec(&input).unwrap();
             let summary = validator().validate(&bytes, false).unwrap();
 
-            assert_eq!(summary.spec_version(), spec);
-            assert_eq!(summary.component_count(), 1);
+            assert_eq!(summary.version, spec);
+            assert_eq!(summary.component_count, 1);
             assert!(matches!(
                 validator().validate(&bytes, true),
                 Err(ValidationError::EmptyExternalInventory)
@@ -366,7 +363,7 @@ fn counts_schema_component_locations_not_component_shaped_values() {
             validator()
                 .validate(&serde_json::to_vec(&input).unwrap(), true)
                 .unwrap()
-                .component_count(),
+                .component_count,
             9
         );
     }
@@ -387,8 +384,8 @@ fn native_writer_produces_valid_inventory_and_keeps_graph_and_properties() {
     document.write(&mut bytes).unwrap();
     let summary = validator().validate(&bytes, false).unwrap();
 
-    assert_eq!(summary.spec_version(), "1.6");
-    assert_eq!(summary.component_count(), 1);
+    assert_eq!(summary.version, "1.6");
+    assert_eq!(summary.component_count, 1);
 
     let output: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(output["version"], 1);
@@ -410,10 +407,7 @@ fn native_writer_produces_valid_inventory_and_keeps_graph_and_properties() {
         .write(&mut bytes)
         .unwrap();
     assert_eq!(
-        validator()
-            .validate(&bytes, false)
-            .unwrap()
-            .component_count(),
+        validator().validate(&bytes, false).unwrap().component_count,
         0
     );
 }

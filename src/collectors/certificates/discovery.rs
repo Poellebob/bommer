@@ -11,8 +11,8 @@ use sha2::{Digest, Sha256};
 use x509_parser::parse_x509_certificate;
 
 use super::error::CertificateError;
-use crate::collection_context::CollectionContext;
-use crate::collection_outcome::{Diagnostic, DiagnosticCode};
+use crate::collection::context::CollectionContext;
+use crate::collection::outcome::{Diagnostic, DiagnosticCode};
 use crate::job::{Backend, Job, Target};
 
 pub(super) struct Observation {
@@ -98,7 +98,7 @@ pub(super) fn configured_paths(
         paths,
         max_file_bytes,
         ..
-    } = job.backend()
+    } = &job.backend
     else {
         return Err(CertificateError::Options);
     };
@@ -119,10 +119,10 @@ pub(super) fn configured_paths(
 }
 
 pub(super) fn resolve_target(job: &Job) -> Result<Option<PathBuf>, CertificateError> {
-    if job.scope().is_host() {
+    if job.scope.is_host() {
         Ok(None)
     } else {
-        match job.target() {
+        match &job.target {
             Target::Directory(path) => {
                 if path.components().any(|part| part == Component::ParentDir) {
                     return Err(CertificateError::InvalidTarget { path: path.clone() });
@@ -366,7 +366,7 @@ pub(super) fn discover(
     context.check()?;
     let target = resolve_target(job)?;
     let paths = configured_paths(job, target.as_deref())?;
-    let Backend::Certificates { max_file_bytes, .. } = job.backend() else {
+    let Backend::Certificates { max_file_bytes, .. } = &job.backend else {
         return Err(CertificateError::Options);
     };
 

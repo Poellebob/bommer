@@ -8,8 +8,8 @@ use thiserror::Error;
 
 #[derive(Debug, Clone)]
 pub(crate) struct CollectionContext {
-    deadline: Instant,
-    cancelled: Arc<AtomicBool>,
+    pub(crate) deadline: Instant,
+    pub(crate) cancelled: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
@@ -36,13 +36,5 @@ impl CollectionContext {
         } else {
             Ok(())
         }
-    }
-
-    pub(crate) fn deadline(&self) -> Instant {
-        self.deadline
-    }
-
-    pub(crate) fn cancelled(&self) -> &AtomicBool {
-        &self.cancelled
     }
 }

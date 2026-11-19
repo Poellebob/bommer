@@ -6,8 +6,8 @@ use std::sync::{Arc, atomic::AtomicBool};
 use std::time::Duration;
 
 use crate::bom::validation::{ValidationError, Validator};
-use crate::collection_context::CollectionContext;
-use crate::collection_outcome::{Coverage, Status};
+use crate::collection::context::CollectionContext;
+use crate::collection::outcome::{Coverage, Status};
 use crate::collectors::import::{self, ImportError};
 use crate::job::{Backend, InventoryKind, Job, Scope, Target};
 use crate::json::DecodeError;
@@ -46,15 +46,15 @@ fn deeply_nested_schema_valid_cbom_is_imported_without_changing_bytes() {
 
         let outcome = import::collect(&import_job(&path), &context(), &mut output).unwrap();
 
-        assert_eq!(outcome.status(), Status::Collected);
-        assert_eq!(outcome.findings(), 71);
-        assert_eq!(outcome.coverage(), Coverage::ProducerDeclaredUnverified);
+        assert_eq!(outcome.status, Status::Collected);
+        assert_eq!(outcome.findings, 71);
+        assert_eq!(outcome.coverage, Coverage::ProducerDeclaredUnverified);
         assert_eq!(output, input.as_bytes());
         assert_eq!(fs::read(&path).unwrap(), input.as_bytes());
 
         let summary = validator.validate(&output, true).unwrap();
-        assert_eq!(summary.spec_version(), spec);
-        assert_eq!(summary.component_count(), 71);
+        assert_eq!(summary.version, spec);
+        assert_eq!(summary.component_count, 71);
     }
 }
 
@@ -146,9 +146,9 @@ fn non_utf8_import_path_is_safe_evidence_and_preserves_source_bytes() {
     let outcome = import::collect(&import_job(&path), &context(), &mut output).unwrap();
 
     assert_eq!(output, input);
-    assert_eq!(outcome.findings(), 1);
-    assert_eq!(outcome.coverage(), Coverage::ProducerDeclaredUnverified);
-    assert!(outcome.evidence()["sourcePath"].is_string());
-    assert_eq!(outcome.evidence()["origin"], "imported");
-    assert!(serde_json::to_vec(outcome.evidence()).is_ok());
+    assert_eq!(outcome.findings, 1);
+    assert_eq!(outcome.coverage, Coverage::ProducerDeclaredUnverified);
+    assert!(outcome.evidence["sourcePath"].is_string());
+    assert_eq!(outcome.evidence["origin"], "imported");
+    assert!(serde_json::to_vec(&outcome.evidence).is_ok());
 }

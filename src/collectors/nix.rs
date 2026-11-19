@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 use thiserror::Error;
 
 use crate::bom::document::Document;
-use crate::collection_context::{CollectionContext, Interrupted};
-use crate::collection_outcome::{CollectionOutcome, Coverage};
+use crate::collection::context::{CollectionContext, Interrupted};
+use crate::collection::outcome::{CollectionOutcome, Coverage};
 use crate::job::{Backend, Job};
 use crate::process::{Process, ProcessError};
 
@@ -68,11 +68,11 @@ fn is_output(path: &str) -> bool {
 }
 
 fn roots(job: &Job) -> Result<(Vec<PathBuf>, Vec<String>), NixError> {
-    let Backend::Nix { roots } = job.backend() else {
+    let Backend::Nix { roots } = &job.backend else {
         return Err(NixError::Options);
     };
     let configured = if roots.is_empty() {
-        vec![job.target().path().ok_or(NixError::Options)?.to_path_buf()]
+        vec![job.target.path().ok_or(NixError::Options)?.to_path_buf()]
     } else {
         roots.clone()
     };
@@ -196,22 +196,22 @@ pub(crate) fn collect(
         Process::capture(
             executable.as_os_str(),
             args,
-            context.deadline(),
-            context.cancelled(),
+            context.deadline,
+            &context.cancelled,
             64 << 20,
             16 << 10,
         )
     };
 
     let version_output = run(&["--version".into()])?;
-    let version = std::str::from_utf8(version_output.stdout())
+    let version = std::str::from_utf8(&version_output.stdout)
         .map_err(|_| NixError::InvalidVersion)?
         .trim();
     let (args, store) = query_arguments(version, &roots)?;
     let captured = run(&args)?;
 
     context.check()?;
-    let (document, findings) = closure_document(captured.stdout(), &roots, job, version)?;
+    let (document, findings) = closure_document(&captured.stdout, &roots, job, version)?;
 
     context.check()?;
     document.write(output)?;
@@ -308,8 +308,8 @@ pub(crate) fn closure_document(
     }
 
     let reference = format!("bommer:inventory:{}", job.stem());
-    let mut root = json!({"type":"file", "bom-ref":reference, "name":job.scope().name()});
-    if let Some(version) = job.scope().version() {
+    let mut root = json!({"type":"file", "bom-ref":reference, "name":job.scope.name()});
+    if let Some(version) = job.scope.version() {
         root["version"] = version.into();
     }
     dependencies.push(json!({"ref":reference,"dependsOn":roots}));

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use crate::collection_context::Interrupted;
+use crate::collection::context::Interrupted;
 
 #[derive(Debug, Error)]
 pub(crate) enum CertificateError {

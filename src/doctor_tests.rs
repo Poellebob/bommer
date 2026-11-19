@@ -38,12 +38,12 @@ fn ready_executable_is_checked_without_execution() {
     fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
     let config = command_config(&executable);
 
-    let report = doctor::check(config.jobs());
+    let report = doctor::check(&config.jobs);
 
     assert!(!report.is_unsuccessful());
-    assert_eq!(report.results().len(), 1);
-    assert_eq!(report.results()[0].name(), "host.packages.sbom");
-    assert!(matches!(report.results()[0].result(), Ok(())));
+    assert_eq!(report.results.len(), 1);
+    assert_eq!(report.results[0].name, "host.packages.sbom");
+    assert!(matches!(report.results[0].result, Ok(())));
     assert!(!marker.exists());
 }
 
@@ -53,13 +53,13 @@ fn missing_executable_retains_typed_readiness_error() {
     let missing = temporary.path().join("missing-collector");
     let config = command_config(&missing);
 
-    let report = doctor::check(config.jobs());
+    let report = doctor::check(&config.jobs);
 
     assert!(report.is_unsuccessful());
-    assert_eq!(report.results().len(), 1);
-    assert_eq!(report.results()[0].name(), "host.packages.sbom");
+    assert_eq!(report.results.len(), 1);
+    assert_eq!(report.results[0].name, "host.packages.sbom");
     assert!(matches!(
-        report.results()[0].result(),
+        &report.results[0].result,
         Err(CollectionError::External(ExternalError::Process(
             ProcessError::MissingExecutable { executable }
         ))) if executable == missing.as_os_str()

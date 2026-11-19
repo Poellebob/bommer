@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use crate::collection_outcome::{CollectionOutcome, Coverage, Diagnostic, DiagnosticCode, Status};
+use crate::collection::outcome::{CollectionOutcome, Coverage, Diagnostic, DiagnosticCode, Status};
 
 #[test]
 fn observed_status_prioritizes_diagnostics_over_findings() {
@@ -23,14 +23,14 @@ fn observed_status_prioritizes_diagnostics_over_findings() {
             Some("1.2.3".into()),
         );
 
-        assert_eq!(outcome.status(), status);
-        assert_eq!(outcome.findings(), findings);
-        assert_eq!(outcome.coverage(), Coverage::DeclaredScope);
-        assert_eq!(outcome.diagnostics().len(), usize::from(diagnostic));
-        assert_eq!(outcome.evidence(), &json!({"source": "fixture"}));
-        assert_eq!(outcome.collector_version(), Some("1.2.3"));
-        assert_eq!(outcome.exclusions(), None);
-        assert_eq!(outcome.target(), None);
+        assert_eq!(outcome.status, status);
+        assert_eq!(outcome.findings, findings);
+        assert_eq!(outcome.coverage, Coverage::DeclaredScope);
+        assert_eq!(outcome.diagnostics.len(), usize::from(diagnostic));
+        assert_eq!(outcome.evidence, json!({"source": "fixture"}));
+        assert_eq!(outcome.collector_version.as_deref(), Some("1.2.3"));
+        assert_eq!(outcome.scope.exclusions, None);
+        assert_eq!(outcome.scope.target, None);
     }
 }
 
@@ -38,14 +38,14 @@ fn observed_status_prioritizes_diagnostics_over_findings() {
 fn external_outcome_is_collected_without_observed_findings() {
     let outcome = CollectionOutcome::external();
 
-    assert_eq!(outcome.status(), Status::Collected);
-    assert_eq!(outcome.findings(), 0);
-    assert_eq!(outcome.coverage(), Coverage::Unknown);
-    assert!(outcome.diagnostics().is_empty());
-    assert_eq!(outcome.collector_version(), None);
-    assert_eq!(outcome.evidence(), &Value::Null);
-    assert_eq!(outcome.exclusions(), None);
-    assert_eq!(outcome.target(), None);
+    assert_eq!(outcome.status, Status::Collected);
+    assert_eq!(outcome.findings, 0);
+    assert_eq!(outcome.coverage, Coverage::Unknown);
+    assert!(outcome.diagnostics.is_empty());
+    assert_eq!(outcome.collector_version, None);
+    assert_eq!(outcome.evidence, Value::Null);
+    assert_eq!(outcome.scope.exclusions, None);
+    assert_eq!(outcome.scope.target, None);
 }
 
 #[test]

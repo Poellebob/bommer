@@ -10,9 +10,9 @@ const BASE: &str = "version: 1\noutput: {directory: /tmp/inventories}\n";
 fn configuration_defaults_and_explicit_duration() {
     let config = Config::parse(BASE).unwrap();
 
-    assert_eq!(config.output_directory(), Path::new("/tmp/inventories"));
-    assert_eq!(config.timeout(), Duration::from_secs(600));
-    assert!(config.jobs().is_empty());
+    assert_eq!(config.output_directory, Path::new("/tmp/inventories"));
+    assert_eq!(config.timeout, Duration::from_secs(600));
+    assert!(config.jobs.is_empty());
 
     for (input, nanos) in [
         ("1h2m3.004005006s", 3_723_004_005_006),
@@ -24,7 +24,7 @@ fn configuration_defaults_and_explicit_duration() {
         ("2562047h47m16.854775807s", i64::MAX as u64),
     ] {
         let config = Config::parse(&format!("{BASE}timeout: '{input}'\n")).unwrap();
-        assert_eq!(config.timeout(), Duration::from_nanos(nanos), "{input}");
+        assert_eq!(config.timeout, Duration::from_nanos(nanos), "{input}");
     }
 
     for input in [
@@ -99,7 +99,7 @@ fn required_fields_and_io_errors_are_typed() {
 
     std::fs::write(&path, BASE).unwrap();
     assert_eq!(
-        Config::load(&path).unwrap().output_directory(),
+        Config::load(&path).unwrap().output_directory,
         Path::new("/tmp/inventories")
     );
 }
@@ -145,8 +145,8 @@ fn validation_reports_the_first_error_in_configuration_order() {
 fn null_fields_have_go_zero_value_behavior() {
     let config = Config::parse(&format!("{BASE}timeout: null\nhost: {{hbom: null, sbom: {{enabled: null, command: null}}, inventories: null}}\napplications: null\n")).unwrap();
 
-    assert_eq!(config.timeout(), Duration::from_secs(600));
-    assert!(config.jobs().is_empty());
+    assert_eq!(config.timeout, Duration::from_secs(600));
+    assert!(config.jobs.is_empty());
 }
 
 #[test]
@@ -210,7 +210,7 @@ fn names_and_targets_are_validated_even_without_enabled_collectors() {
 fn disabled_collectors_preserve_go_validation_behavior() {
     let config = Config::parse(&format!("{BASE}host:\n  inventories:\n    - name: off\n      kind: cbom\n      collector:\n        backend: unknown\n        certificates: {{paths: [''], max_file_bytes: -1}}\n        nix: {{roots: [relative]}}\n        import: {{path: ''}}\n")).unwrap();
 
-    assert!(config.jobs().is_empty());
+    assert!(config.jobs.is_empty());
 }
 
 #[test]
@@ -404,7 +404,7 @@ fn certificates_normalize_default_and_enforce_limits() {
                     max_file_bytes,
                     include_identity,
                     ..
-                } = config.jobs()[0].backend()
+                } = &config.jobs[0].backend
                 else {
                     panic!("expected certificates");
                 };

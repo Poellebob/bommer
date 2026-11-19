@@ -17,10 +17,10 @@ use crate::process::CommandSpec;
 
 #[derive(Debug)]
 pub(crate) struct Config {
-    output_directory: PathBuf,
-    timeout: Duration,
-    jobs: Vec<Job>,
-    applications: Vec<Name>,
+    pub(crate) output_directory: PathBuf,
+    pub(crate) timeout: Duration,
+    pub(crate) jobs: Vec<Job>,
+    pub(crate) applications: Vec<Name>,
 }
 
 #[derive(Debug, Error)]
@@ -172,22 +172,6 @@ impl Config {
         }
 
         Ok(config)
-    }
-
-    pub(crate) fn output_directory(&self) -> &Path {
-        &self.output_directory
-    }
-
-    pub(crate) fn timeout(&self) -> Duration {
-        self.timeout
-    }
-
-    pub(crate) fn jobs(&self) -> &[Job] {
-        &self.jobs
-    }
-
-    pub(crate) fn applications(&self) -> &[Name] {
-        &self.applications
     }
 
     fn add_inventories(

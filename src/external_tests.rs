@@ -3,7 +3,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::sync::{Arc, atomic::AtomicBool};
 use std::time::Duration;
 
-use crate::collection_context::CollectionContext;
+use crate::collection::context::CollectionContext;
 use crate::collectors::external::{self, ExternalError};
 use crate::job::{Backend, InventoryKind, Job, Name, Scope, Target};
 use crate::process::CommandSpec;
@@ -235,8 +235,8 @@ fn doctor_checks_files_without_executing_collector() {
     assert_eq!(stderr, b"log");
     assert_eq!(std::fs::read(marker).unwrap(), b"executed");
     assert!(matches!(
-        result.coverage(),
-        crate::collection_outcome::Coverage::Unknown
+        result.coverage,
+        crate::collection::outcome::Coverage::Unknown
     ));
 }
 
@@ -350,7 +350,7 @@ fn git_ignores_preserve_negations_tracked_files_and_escape_globs() {
             expected.into_iter().map(OsString::from).collect::<Vec<_>>()
         );
 
-        let Backend::Syft { exclusions, .. } = job.backend() else {
+        let Backend::Syft { exclusions, .. } = &job.backend else {
             unreachable!()
         };
         assert_eq!(exclusions, &["./manual/**", "./manual/**"]);

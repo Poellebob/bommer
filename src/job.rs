@@ -64,11 +64,11 @@ pub(crate) enum Backend {
 
 #[derive(Debug, Clone)]
 pub(crate) struct Job {
-    scope: Scope,
-    inventory: Option<Name>,
-    kind: InventoryKind,
-    target: Target,
-    backend: Backend,
+    pub(crate) scope: Scope,
+    pub(crate) inventory: Option<Name>,
+    pub(crate) kind: InventoryKind,
+    pub(crate) target: Target,
+    pub(crate) backend: Backend,
 }
 
 #[derive(Debug, Error)]
@@ -261,26 +261,6 @@ impl Job {
             target,
             backend,
         })
-    }
-
-    pub(crate) fn scope(&self) -> &Scope {
-        &self.scope
-    }
-
-    pub(crate) fn inventory(&self) -> Option<&Name> {
-        self.inventory.as_ref()
-    }
-
-    pub(crate) fn kind(&self) -> InventoryKind {
-        self.kind
-    }
-
-    pub(crate) fn target(&self) -> &Target {
-        &self.target
-    }
-
-    pub(crate) fn backend(&self) -> &Backend {
-        &self.backend
     }
 
     pub(crate) fn stem(&self) -> String {

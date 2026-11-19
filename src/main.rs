@@ -1,10 +1,8 @@
 mod bom;
-mod collection_context;
-mod collection_outcome;
+mod collection;
 mod collectors;
 mod config;
 mod doctor;
-mod failure;
 mod job;
 mod json;
 mod output;
@@ -100,7 +98,7 @@ impl Options {
             InventoryFilter::Cbom => job::InventoryKind::Cbom,
         });
         let application = self.application.map(job::Name::new).transpose()?;
-        let plan = plan::Plan::build(&config, &plan::Selection::new(kind, application))?;
+        let plan = plan::Plan::build(&config, &plan::Selection { kind, application })?;
 
         Ok((config, plan))
     }
@@ -127,20 +125,20 @@ fn run() -> Result<ExitCode, CliError> {
             let (config, plan) = options.load_plan()?;
             let report = scan::run(&config, &plan)?;
 
-            println!("{}", report.directory().display());
+            println!("{}", report.directory.display());
 
-            Ok(ExitCode::from(u8::from(report.is_unsuccessful())))
+            Ok(ExitCode::from(u8::from(report.unsuccessful)))
         }
 
         Command::Doctor(options) => {
             let (_config, plan) = options.load_plan()?;
-            let report = doctor::check(plan.jobs());
+            let report = doctor::check(&plan.jobs);
 
-            for readiness in report.results() {
-                match readiness.result() {
-                    Ok(()) => println!("ready {}", readiness.name()),
+            for readiness in &report.results {
+                match &readiness.result {
+                    Ok(()) => println!("ready {}", readiness.name),
                     Err(error) => {
-                        eprintln!("not ready {}: {}", readiness.name(), terminal_error(error));
+                        eprintln!("not ready {}: {}", readiness.name, terminal_error(error));
                     }
                 }
             }

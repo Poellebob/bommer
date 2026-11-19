@@ -3,8 +3,8 @@ use crate::json;
 
 #[derive(Debug)]
 pub(crate) struct DocumentSummary {
-    version: String,
-    component_count: usize,
+    pub(crate) version: String,
+    pub(crate) component_count: usize,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -35,16 +35,6 @@ pub(crate) enum ValidationError {
 pub(crate) struct Validator {
     v1_6: schemas::CompiledSchema,
     v1_7: schemas::CompiledSchema,
-}
-
-impl DocumentSummary {
-    pub(crate) fn spec_version(&self) -> &str {
-        &self.version
-    }
-
-    pub(crate) fn component_count(&self) -> usize {
-        self.component_count
-    }
 }
 
 impl Validator {

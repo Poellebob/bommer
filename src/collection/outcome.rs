@@ -34,21 +34,26 @@ pub(crate) enum DiagnosticCode {
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct Diagnostic {
-    code: DiagnosticCode,
+    pub(crate) code: DiagnosticCode,
     #[serde(skip_serializing_if = "Option::is_none")]
-    path: Option<String>,
+    pub(crate) path: Option<String>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct ExecutionScope {
+    pub(crate) target: Option<String>,
+    pub(crate) exclusions: Option<Vec<String>>,
 }
 
 #[derive(Debug)]
 pub(crate) struct CollectionOutcome {
-    status: Status,
-    findings: usize,
-    coverage: Coverage,
-    diagnostics: Vec<Diagnostic>,
-    collector_version: Option<String>,
-    evidence: serde_json::Value,
-    exclusions: Option<Vec<String>>,
-    target: Option<String>,
+    pub(crate) status: Status,
+    pub(crate) findings: usize,
+    pub(crate) coverage: Coverage,
+    pub(crate) diagnostics: Vec<Diagnostic>,
+    pub(crate) collector_version: Option<String>,
+    pub(crate) evidence: serde_json::Value,
+    pub(crate) scope: ExecutionScope,
 }
 
 impl Diagnostic {
@@ -57,11 +62,6 @@ impl Diagnostic {
             code,
             path: path.as_deref().map(path_text),
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn code(&self) -> DiagnosticCode {
-        self.code
     }
 }
 
@@ -88,8 +88,7 @@ impl CollectionOutcome {
             diagnostics,
             evidence,
             collector_version,
-            exclusions: None,
-            target: None,
+            scope: ExecutionScope::default(),
         }
     }
 
@@ -101,50 +100,7 @@ impl CollectionOutcome {
             diagnostics: vec![],
             collector_version: None,
             evidence: serde_json::Value::Null,
-            exclusions: None,
-            target: None,
+            scope: ExecutionScope::default(),
         }
-    }
-
-    pub(crate) fn status(&self) -> Status {
-        self.status
-    }
-
-    pub(crate) fn findings(&self) -> usize {
-        self.findings
-    }
-
-    pub(crate) fn coverage(&self) -> Coverage {
-        self.coverage
-    }
-
-    pub(crate) fn diagnostics(&self) -> &[Diagnostic] {
-        &self.diagnostics
-    }
-
-    pub(crate) fn collector_version(&self) -> Option<&str> {
-        self.collector_version.as_deref()
-    }
-
-    pub(crate) fn evidence(&self) -> &serde_json::Value {
-        &self.evidence
-    }
-
-    pub(crate) fn with_exclusions(mut self, exclusions: Vec<String>) -> Self {
-        self.exclusions = Some(exclusions);
-        self
-    }
-
-    pub(crate) fn with_target(mut self, target: String) -> Self {
-        self.target = Some(target);
-        self
-    }
-
-    pub(crate) fn exclusions(&self) -> Option<&[String]> {
-        self.exclusions.as_deref()
-    }
-
-    pub(crate) fn target(&self) -> Option<&str> {
-        self.target.as_deref()
     }
 }

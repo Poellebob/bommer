@@ -6,8 +6,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::collection_context::{CollectionContext, Interrupted};
-use crate::collection_outcome::{CollectionOutcome, Coverage};
+use crate::collection::context::{CollectionContext, Interrupted};
+use crate::collection::outcome::{CollectionOutcome, Coverage};
 use crate::job::{Backend, Job};
 use crate::json;
 
@@ -36,7 +36,7 @@ pub(crate) enum ImportError {
 const LIMIT: u64 = 64 << 20;
 
 fn open(job: &Job) -> Result<File, ImportError> {
-    let Backend::Import { path } = job.backend() else {
+    let Backend::Import { path } = &job.backend else {
         return Err(ImportError::Options);
     };
     let file = OpenOptions::new()
@@ -119,7 +119,7 @@ pub(crate) fn collect(
         return Err(ImportError::NoCryptographicAssets);
     }
 
-    let Backend::Import { path } = job.backend() else {
+    let Backend::Import { path } = &job.backend else {
         return Err(ImportError::Options);
     };
     let evidence = json!({"origin":"imported", "sourcePath":crate::path_encoding::path_text(path), "sourceSHA256":hex::encode(Sha256::digest(&data)), "discovery":"not-observed-locally", "applicationAssociation":"configuration-declared-not-verified"});

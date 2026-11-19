@@ -11,7 +11,7 @@ use x509_parser::{
 use super::discovery::Observation;
 use super::error::CertificateError;
 use crate::bom::document::Document;
-use crate::collection_context::CollectionContext;
+use crate::collection::context::CollectionContext;
 use crate::path_encoding::path_text;
 
 pub(super) struct Assets {

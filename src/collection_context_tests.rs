@@ -4,7 +4,7 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-use crate::collection_context::{CollectionContext, Interrupted};
+use crate::collection::context::{CollectionContext, Interrupted};
 
 #[test]
 fn active_context_shares_cancellation_and_preserves_deadline() {
@@ -15,10 +15,10 @@ fn active_context_shares_cancellation_and_preserves_deadline() {
     let cloned = context.clone();
 
     assert_eq!(context.check(), Ok(()));
-    assert!(context.deadline() >= before + timeout);
-    assert!(context.deadline() <= Instant::now() + timeout);
-    assert_eq!(cloned.deadline(), context.deadline());
-    assert!(std::ptr::eq(context.cancelled(), cancelled.as_ref()));
+    assert!(context.deadline >= before + timeout);
+    assert!(context.deadline <= Instant::now() + timeout);
+    assert_eq!(cloned.deadline, context.deadline);
+    assert!(Arc::ptr_eq(&context.cancelled, &cancelled));
 
     cancelled.store(true, Ordering::Relaxed);
     assert_eq!(context.check(), Err(Interrupted::Cancelled));

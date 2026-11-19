@@ -3,9 +3,9 @@ pub(crate) mod external;
 pub(crate) mod import;
 pub(crate) mod nix;
 
-use crate::collection_context::{CollectionContext, Interrupted};
-use crate::collection_outcome::CollectionOutcome;
-use crate::failure::{Failure, FailureKind};
+use crate::collection::context::{CollectionContext, Interrupted};
+use crate::collection::failure::{Failure, FailureKind};
+use crate::collection::outcome::CollectionOutcome;
 use crate::job::{Backend, Job};
 use crate::process::{ProcessError, Stream};
 use std::io::Write;
@@ -89,7 +89,7 @@ impl CollectionError {
 }
 
 pub(crate) fn check(job: &Job) -> Result<(), CollectionError> {
-    match job.backend() {
+    match &job.backend {
         Backend::Nix { .. } => nix::check(job).map_err(Into::into),
         Backend::Certificates { .. } => certificates::check(job).map_err(Into::into),
         Backend::Import { .. } => import::check(job).map_err(Into::into),
@@ -104,7 +104,7 @@ pub(crate) fn collect(
     stderr: &mut dyn Write,
 ) -> Result<CollectionOutcome, CollectionError> {
     context.check()?;
-    match job.backend() {
+    match &job.backend {
         Backend::Nix { .. } => nix::collect(job, context, output).map_err(Into::into),
         Backend::Certificates { .. } => {
             certificates::collect(job, context, output).map_err(Into::into)

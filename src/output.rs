@@ -9,8 +9,8 @@ use sha2::{Digest, Sha256};
 use tempfile::{NamedTempFile, TempDir};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-use crate::collection_outcome::{CollectionOutcome, Coverage, Diagnostic, Status};
-use crate::failure::Failure;
+use crate::collection::failure::Failure;
+use crate::collection::outcome::{CollectionOutcome, Coverage, Diagnostic, Status};
 use crate::job::{Backend, Job};
 
 #[derive(Debug, thiserror::Error)]
@@ -175,7 +175,7 @@ pub(crate) struct JobResult {
 
 impl JobResult {
     pub(crate) fn pending(job: &Job) -> Result<Self, OutputError> {
-        let (exclude, respect_gitignore) = match job.backend() {
+        let (exclude, respect_gitignore) = match &job.backend {
             Backend::Syft {
                 exclusions,
                 respect_gitignore,
@@ -184,13 +184,13 @@ impl JobResult {
         };
 
         Ok(Self {
-            name: job.scope().name().into(),
-            kind: job.kind(),
-            target: job.target().display(),
-            source_version: job.scope().version().map(Into::into),
+            name: job.scope.name().into(),
+            kind: job.kind,
+            target: job.target.display(),
+            source_version: job.scope.version().map(Into::into),
             exclude,
             respect_gitignore,
-            backend: job.backend().name().into(),
+            backend: job.backend.name().into(),
             status: Status::Failed,
             artifact: None,
             digest: None,
@@ -198,12 +198,12 @@ impl JobResult {
             failure: None,
             started: timestamp()?,
             finished: String::new(),
-            scope: if job.scope().is_host() {
+            scope: if job.scope.is_host() {
                 "host"
             } else {
                 "application"
             },
-            inventory: job.inventory().map(|name| name.as_str().into()),
+            inventory: job.inventory.as_ref().map(|name| name.as_str().into()),
             spec_version: None,
             findings: 0,
             collector_version: None,
@@ -221,12 +221,12 @@ impl JobResult {
         count: usize,
         external: bool,
     ) {
-        self.status = outcome.status();
-        self.coverage = outcome.coverage();
-        self.findings = if external { count } else { outcome.findings() };
-        self.diagnostics = outcome.diagnostics().to_vec();
-        self.collector_version = outcome.collector_version().map(Into::into);
-        self.evidence = outcome.evidence().clone();
+        self.status = outcome.status;
+        self.coverage = outcome.coverage;
+        self.findings = if external { count } else { outcome.findings };
+        self.diagnostics = outcome.diagnostics.to_vec();
+        self.collector_version = outcome.collector_version.as_deref().map(Into::into);
+        self.evidence = outcome.evidence.clone();
         self.observed_scope(&outcome);
 
         self.artifact = Some(artifact.name);
@@ -245,11 +245,11 @@ impl JobResult {
     }
 
     pub(crate) fn observed_scope(&mut self, outcome: &CollectionOutcome) {
-        if let Some(exclusions) = outcome.exclusions() {
+        if let Some(exclusions) = outcome.scope.exclusions.as_deref() {
             self.exclude = exclusions.to_vec();
         }
 
-        if let Some(target) = outcome.target() {
+        if let Some(target) = outcome.scope.target.as_deref() {
             self.target = target.into();
         }
     }

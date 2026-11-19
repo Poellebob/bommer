@@ -36,26 +36,29 @@ fn planning_preserves_order_metadata_and_selection() {
             vec!["api.cbom", "api.producer.cbom"],
         ),
     ] {
-        let selection = Selection::new(kind, app.map(|name| Name::new(name.into()).unwrap()));
+        let selection = Selection {
+            kind,
+            application: app.map(|name| Name::new(name.into()).unwrap()),
+        };
         let plan = Plan::build(&config, &selection).unwrap();
 
         assert_eq!(
-            plan.jobs().iter().map(|job| job.stem()).collect::<Vec<_>>(),
+            plan.jobs.iter().map(|job| job.stem()).collect::<Vec<_>>(),
             expected
         );
     }
 
-    let job = &config.jobs()[3];
-    assert_eq!(job.scope().version(), Some("2.3"));
-    assert!(matches!(job.target(), Target::RegistryImage(image) if image == "example/api:2"));
-    assert!(matches!(config.jobs()[1].target(), Target::Host));
+    let job = &config.jobs[3];
+    assert_eq!(job.scope.version(), Some("2.3"));
+    assert!(matches!(&job.target, Target::RegistryImage(image) if image == "example/api:2"));
+    assert!(matches!(config.jobs[1].target, Target::Host));
 
-    let Backend::Command(spec) = config.jobs()[4].backend() else {
+    let Backend::Command(spec) = &config.jobs[4].backend else {
         panic!("expected command");
     };
 
     assert_eq!(spec.executable(), "scanner");
-    assert_eq!(spec.arguments(), &[std::ffi::OsString::from("{target}")]);
+    assert_eq!(spec.arguments, &[std::ffi::OsString::from("{target}")]);
 }
 
 #[test]
@@ -67,7 +70,7 @@ fn disabled_application_is_known_but_has_empty_selection() {
 
     assert_eq!(
         config
-            .applications()
+            .applications
             .iter()
             .map(Name::as_str)
             .collect::<Vec<_>>(),
@@ -75,10 +78,10 @@ fn disabled_application_is_known_but_has_empty_selection() {
     );
 
     for application in [None, Some("off")] {
-        let selection = Selection::new(
-            None,
-            application.map(|name| Name::new(name.into()).unwrap()),
-        );
+        let selection = Selection {
+            kind: None,
+            application: application.map(|name| Name::new(name.into()).unwrap()),
+        };
 
         assert!(matches!(
             Plan::build(&config, &selection),
@@ -86,7 +89,10 @@ fn disabled_application_is_known_but_has_empty_selection() {
         ));
     }
 
-    let selection = Selection::new(None, Some(Name::new("missing".into()).unwrap()));
+    let selection = Selection {
+        kind: None,
+        application: Some(Name::new("missing".into()).unwrap()),
+    };
     assert!(
         matches!(Plan::build(&config, &selection), Err(PlanError::UnknownApplication { name }) if name.as_str() == "missing")
     );

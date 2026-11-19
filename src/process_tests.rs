@@ -13,10 +13,7 @@ fn command_construction_preserves_literal_arguments() {
     let command = CommandSpec::new(executable, arguments).unwrap();
 
     assert_eq!(command.executable(), "scanner");
-    assert_eq!(
-        command.arguments(),
-        &["a b", "$(touch unexpected)", "*.json"]
-    );
+    assert_eq!(command.arguments, &["a b", "$(touch unexpected)", "*.json"]);
 }
 
 #[test]
@@ -50,8 +47,8 @@ fn capture_preserves_both_pipes_and_literal_arguments() {
     )
     .unwrap();
 
-    assert_eq!(output.stdout(), b"$HOME; * space");
-    assert_eq!(output.stderr(), b"diagnostic");
+    assert_eq!(output.stdout, b"$HOME; * space");
+    assert_eq!(output.stderr, b"diagnostic");
 }
 
 #[test]
@@ -72,8 +69,8 @@ fn capture_drains_large_pipes_without_deadlock() {
     )
     .unwrap();
 
-    assert_eq!(output.stdout(), b"abcd".repeat(20000));
-    assert_eq!(output.stderr(), b"efgh".repeat(20000));
+    assert_eq!(output.stdout, b"abcd".repeat(20000));
+    assert_eq!(output.stderr, b"efgh".repeat(20000));
 }
 
 #[test]

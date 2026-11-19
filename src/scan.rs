@@ -6,11 +6,11 @@ use std::sync::{Arc, atomic::AtomicBool};
 use std::time::Duration;
 
 use crate::bom::validation::{ValidationError, Validator};
-use crate::collection_context::{CollectionContext, Interrupted};
-use crate::collection_outcome::Status;
+use crate::collection::context::{CollectionContext, Interrupted};
+use crate::collection::failure::{Failure, FailureKind};
+use crate::collection::outcome::Status;
 use crate::collectors::{self, CollectionError};
 use crate::config::Config;
-use crate::failure::{Failure, FailureKind};
 use crate::job::Job;
 use crate::output::{JobResult, Manifest, OutputError, RunOutput};
 use crate::plan::Plan;
@@ -46,8 +46,8 @@ enum JobFailure {
 
 #[derive(Debug)]
 pub(crate) struct ScanReport {
-    directory: PathBuf,
-    unsuccessful: bool,
+    pub(crate) directory: PathBuf,
+    pub(crate) unsuccessful: bool,
 }
 
 pub(crate) struct Scan {
@@ -67,16 +67,6 @@ impl JobFailure {
     }
 }
 
-impl ScanReport {
-    pub(crate) fn directory(&self) -> &Path {
-        &self.directory
-    }
-
-    pub(crate) fn is_unsuccessful(&self) -> bool {
-        self.unsuccessful
-    }
-}
-
 pub(crate) fn run(config: &Config, plan: &Plan) -> Result<ScanReport, ScanError> {
     let cancelled = Arc::new(AtomicBool::new(false));
     for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
@@ -84,9 +74,9 @@ pub(crate) fn run(config: &Config, plan: &Plan) -> Result<ScanReport, ScanError>
     }
 
     Scan::new()?.execute(
-        plan.jobs(),
-        config.output_directory(),
-        config.timeout(),
+        &plan.jobs,
+        &config.output_directory,
+        config.timeout,
         cancelled,
     )
 }
@@ -130,10 +120,8 @@ impl Scan {
                     return Err(JobFailure::TooLarge);
                 }
 
-                let summary = self
-                    .validator
-                    .validate(&bytes, !job.backend().is_native())?;
-                if summary.component_count() == 0 && outcome.status() == Status::Collected {
+                let summary = self.validator.validate(&bytes, !job.backend.is_native())?;
+                if summary.component_count == 0 && outcome.status == Status::Collected {
                     return Err(JobFailure::EmptyCollected);
                 }
 
@@ -147,9 +135,9 @@ impl Scan {
                     result.complete(
                         outcome,
                         artifact,
-                        summary.spec_version(),
-                        summary.component_count(),
-                        !job.backend().is_native(),
+                        &summary.version,
+                        summary.component_count,
+                        !job.backend.is_native(),
                     );
                 }
                 Err(error) => {

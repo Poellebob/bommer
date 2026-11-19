@@ -5,8 +5,8 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use crate::collection_context::CollectionContext;
-use crate::collection_outcome::CollectionOutcome;
+use crate::collection::context::CollectionContext;
+use crate::collection::outcome::{CollectionOutcome, ExecutionScope};
 use crate::job::{Backend, InventoryKind, Job, Scope, Target};
 use crate::process::{Process, ProcessError};
 
@@ -43,12 +43,12 @@ struct Prepared {
 }
 
 pub(crate) fn check(job: &Job) -> Result<(), ExternalError> {
-    let executable = match job.backend() {
+    let executable = match &job.backend {
         Backend::Hbom => OsStr::new("hbom"),
         Backend::Syft {
             respect_gitignore, ..
         } => {
-            if job.scope().is_host() && std::path::Path::new("/run/current-system").exists() {
+            if job.scope.is_host() && std::path::Path::new("/run/current-system").exists() {
                 return Err(ExternalError::NixosHost);
             }
             if *respect_gitignore {
@@ -61,8 +61,8 @@ pub(crate) fn check(job: &Job) -> Result<(), ExternalError> {
     };
     Process::find_executable(executable)?;
 
-    if !job.scope().is_host()
-        && let Target::Directory(path) = job.target()
+    if !job.scope.is_host()
+        && let Target::Directory(path) = &job.target
     {
         let metadata = std::fs::metadata(path).map_err(|source| ExternalError::TargetIo {
             path: path.clone(),
@@ -88,8 +88,8 @@ pub(crate) fn collect(
     Process::stream(
         &prepared.executable,
         &prepared.arguments,
-        context.deadline(),
-        context.cancelled(),
+        context.deadline,
+        &context.cancelled,
         output,
         stderr,
     )
@@ -99,9 +99,13 @@ pub(crate) fn collect(
         target: prepared.target.clone(),
     })?;
 
-    Ok(CollectionOutcome::external()
-        .with_exclusions(prepared.exclusions)
-        .with_target(prepared.target))
+    Ok(CollectionOutcome {
+        scope: ExecutionScope {
+            target: Some(prepared.target),
+            exclusions: Some(prepared.exclusions),
+        },
+        ..CollectionOutcome::external()
+    })
 }
 
 #[cfg(test)]
@@ -119,23 +123,23 @@ pub(crate) fn prepare(
 }
 
 fn prepare_command(job: &Job, context: &CollectionContext) -> Result<Prepared, ExternalError> {
-    let target = match job.target() {
-        Target::Host if matches!(job.kind(), InventoryKind::Sbom) => OsString::from("dir:/"),
+    let target = match &job.target {
+        Target::Host if matches!(job.kind, InventoryKind::Sbom) => OsString::from("dir:/"),
         Target::Directory(path) | Target::NixClosure(path) => path.as_os_str().to_owned(),
         target => OsString::from(target.display()),
     };
     let (executable, mut arguments) = command(job, &target)?;
 
-    let mut patterns: Vec<OsString> = match job.backend() {
+    let mut patterns: Vec<OsString> = match &job.backend {
         Backend::Syft { exclusions, .. } => exclusions.iter().map(OsString::from).collect(),
         _ => Vec::new(),
     };
     if let Backend::Syft {
         respect_gitignore: true,
         ..
-    } = job.backend()
+    } = &job.backend
     {
-        let Target::Directory(path) = job.target() else {
+        let Target::Directory(path) = &job.target else {
             return Err(ExternalError::UnsupportedTarget);
         };
         let git_arguments = [
@@ -151,15 +155,15 @@ fn prepare_command(job: &Job, context: &CollectionContext) -> Result<Prepared, E
         let ignored = Process::capture(
             OsStr::new("git"),
             &git_arguments,
-            context.deadline(),
-            context.cancelled(),
+            context.deadline,
+            &context.cancelled,
             64 << 20,
             1 << 20,
         )?;
 
         patterns.extend([OsString::from("./.git"), OsString::from("./.git/**")]);
         for path in ignored
-            .stdout()
+            .stdout
             .split(|byte| *byte == 0)
             .filter(|path| !path.is_empty())
         {
@@ -206,10 +210,10 @@ fn command(
     job: &Job,
     effective_target: &OsStr,
 ) -> Result<(OsString, Vec<OsString>), ExternalError> {
-    match job.backend() {
+    match &job.backend {
         Backend::Hbom => Ok(("hbom".into(), vec!["-p".into()])),
         Backend::Syft { .. } => {
-            let target = match job.target() {
+            let target = match &job.target {
                 Target::Host => OsString::from("dir:/"),
                 Target::Directory(path) => {
                     let mut value = OsString::from("dir:");
@@ -220,7 +224,7 @@ fn command(
                 _ => return Err(ExternalError::UnsupportedTarget),
             };
             let mut arguments = vec!["scan".into(), target, "-o".into(), "cyclonedx-json".into()];
-            if let Scope::Application { name, version } = job.scope() {
+            if let Scope::Application { name, version } = &job.scope {
                 arguments.extend(["--source-name".into(), name.as_str().into()]);
                 if let Some(version) = version {
                     arguments.extend(["--source-version".into(), version.into()]);
@@ -231,7 +235,7 @@ fn command(
         }
         Backend::Command(spec) => {
             let arguments = spec
-                .arguments()
+                .arguments
                 .iter()
                 .map(|argument| {
                     let mut replaced = Vec::new();

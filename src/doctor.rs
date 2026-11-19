@@ -4,29 +4,15 @@ use crate::collectors::{self, CollectionError};
 use crate::job::Job;
 
 pub(crate) struct Readiness {
-    name: String,
-    result: Result<(), CollectionError>,
+    pub(crate) name: String,
+    pub(crate) result: Result<(), CollectionError>,
 }
 
 pub(crate) struct Report {
-    results: Vec<Readiness>,
-}
-
-impl Readiness {
-    pub(crate) fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub(crate) fn result(&self) -> &Result<(), CollectionError> {
-        &self.result
-    }
+    pub(crate) results: Vec<Readiness>,
 }
 
 impl Report {
-    pub(crate) fn results(&self) -> &[Readiness] {
-        &self.results
-    }
-
     pub(crate) fn is_unsuccessful(&self) -> bool {
         self.results.iter().any(|result| result.result.is_err())
     }

@@ -17,7 +17,7 @@ const LOG_LIMIT: usize = 1 << 20;
 #[derive(Debug, Clone)]
 pub(crate) struct CommandSpec {
     executable: OsString,
-    arguments: Vec<OsString>,
+    pub(crate) arguments: Vec<OsString>,
 }
 
 #[derive(Debug, PartialEq, Eq, Error)]
@@ -58,8 +58,8 @@ pub(crate) enum Stream {
 
 #[derive(Debug, Default)]
 pub(crate) struct ProcessOutput {
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
+    pub(crate) stdout: Vec<u8>,
+    pub(crate) stderr: Vec<u8>,
 }
 
 // Keep the group identity even after the direct child has been reaped: descendants
@@ -88,20 +88,6 @@ impl CommandSpec {
 
     pub(crate) fn executable(&self) -> &OsStr {
         &self.executable
-    }
-
-    pub(crate) fn arguments(&self) -> &[OsString] {
-        &self.arguments
-    }
-}
-
-impl ProcessOutput {
-    pub(crate) fn stdout(&self) -> &[u8] {
-        &self.stdout
-    }
-
-    pub(crate) fn stderr(&self) -> &[u8] {
-        &self.stderr
     }
 }
 
@@ -276,13 +262,13 @@ impl Process {
             &mut output,
         );
 
-        let log_result = stderr.write_all(output.stderr());
+        let log_result = stderr.write_all(&output.stderr);
         // Preserve the process failure even if its diagnostic writer also fails.
         result?;
         log_result?;
 
         check_interruption(deadline, cancelled)?;
-        stdout.write_all(output.stdout())?;
+        stdout.write_all(&output.stdout)?;
 
         Ok(())
     }

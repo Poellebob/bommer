@@ -5,8 +5,8 @@ pub(crate) mod error;
 use std::io::Write;
 
 use self::error::CertificateError;
-use crate::collection_context::CollectionContext;
-use crate::collection_outcome::{CollectionOutcome, Coverage};
+use crate::collection::context::CollectionContext;
+use crate::collection::outcome::{CollectionOutcome, Coverage, ExecutionScope};
 use crate::job::{Backend, Job};
 use crate::path_encoding::path_text;
 
@@ -34,7 +34,7 @@ pub(crate) fn collect_with_limits(
     let discovery = discovery::discover(job, context, entry_limit, depth_limit)?;
     let Backend::Certificates {
         include_identity, ..
-    } = job.backend()
+    } = &job.backend
     else {
         return Err(CertificateError::Options);
     };
@@ -43,18 +43,23 @@ pub(crate) fn collect_with_limits(
     context.check()?;
     assets.document.write(output)?;
 
-    Ok(CollectionOutcome::observed(
-        discovery.observations.len(),
-        Coverage::DeclaredScope,
-        discovery.diagnostics,
-        assets.evidence,
-        Some("certificates/1".into()),
-    )
-    .with_target(
-        discovery
-            .target
-            .as_deref()
-            .map(path_text)
-            .unwrap_or_default(),
-    ))
+    Ok(CollectionOutcome {
+        scope: ExecutionScope {
+            target: Some(
+                discovery
+                    .target
+                    .as_deref()
+                    .map(path_text)
+                    .unwrap_or_default(),
+            ),
+            exclusions: None,
+        },
+        ..CollectionOutcome::observed(
+            discovery.observations.len(),
+            Coverage::DeclaredScope,
+            discovery.diagnostics,
+            assets.evidence,
+            Some("certificates/1".into()),
+        )
+    })
 }

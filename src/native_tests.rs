@@ -11,8 +11,8 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 
 use crate::bom::validation::Validator;
-use crate::collection_context::{CollectionContext, Interrupted};
-use crate::collection_outcome::{Coverage, DiagnosticCode, Status};
+use crate::collection::context::{CollectionContext, Interrupted};
+use crate::collection::outcome::{Coverage, DiagnosticCode, Status};
 use crate::collectors::{certificates, import, nix};
 use crate::job::{Backend, InventoryKind, Job, Name, Scope, Target};
 use crate::scan::Scan;
@@ -99,13 +99,10 @@ fn certificate_non_utf8_sources_and_symlinks_serialize_without_losing_path_bytes
 
     let outcome = certificates::collect(&job, &context(), &mut output).unwrap();
 
-    assert_eq!(outcome.status(), Status::Partial);
-    assert_eq!(outcome.findings(), 1);
-    assert_eq!(outcome.diagnostics().len(), 1);
-    assert_eq!(
-        outcome.diagnostics()[0].code(),
-        DiagnosticCode::SymlinkRefused
-    );
+    assert_eq!(outcome.status, Status::Partial);
+    assert_eq!(outcome.findings, 1);
+    assert_eq!(outcome.diagnostics.len(), 1);
+    assert_eq!(outcome.diagnostics[0].code, DiagnosticCode::SymlinkRefused);
 
     let source_text = format!(
         "bommer:unix-bytes:{}",
@@ -115,10 +112,10 @@ fn certificate_non_utf8_sources_and_symlinks_serialize_without_losing_path_bytes
         "bommer:unix-bytes:{}",
         hex::encode(link_path.as_os_str().as_bytes())
     );
-    let diagnostics = serde_json::to_value(outcome.diagnostics()).unwrap();
+    let diagnostics = serde_json::to_value(&outcome.diagnostics).unwrap();
     assert_eq!(diagnostics[0]["path"], link_text);
     assert_eq!(
-        outcome.evidence()["sources"]["certificate:sha256:39f41ff9385a90df31a90fc6c0c686cf2343dea2f18cd058339a0d00a07a51cb"],
+        outcome.evidence["sources"]["certificate:sha256:39f41ff9385a90df31a90fc6c0c686cf2343dea2f18cd058339a0d00a07a51cb"],
         json!([source_text])
     );
     assert_eq!(
@@ -126,7 +123,7 @@ fn certificate_non_utf8_sources_and_symlinks_serialize_without_losing_path_bytes
             .unwrap()
             .validate(&output, false)
             .unwrap()
-            .component_count(),
+            .component_count,
         3
     );
 
@@ -158,10 +155,9 @@ fn certificate_non_utf8_sources_and_symlinks_serialize_without_losing_path_bytes
         )
         .unwrap();
 
-    assert!(report.is_unsuccessful());
+    assert!(report.unsuccessful);
     let manifest: Value =
-        serde_json::from_slice(&fs::read(report.directory().join("manifest.json")).unwrap())
-            .unwrap();
+        serde_json::from_slice(&fs::read(report.directory.join("manifest.json")).unwrap()).unwrap();
     assert_eq!(manifest["results"][0]["status"], "partial");
     assert_eq!(
         manifest["results"][0]["target"],
@@ -189,16 +185,16 @@ fn certificate_depth_rejections_spend_the_shared_entry_and_diagnostic_budget() {
 
     let outcome = certificates::collect_with_limits(&job, &context(), &mut output, 6, 1).unwrap();
 
-    assert_eq!(outcome.status(), Status::Partial);
-    assert_eq!(outcome.findings(), 0);
-    assert!(outcome.diagnostics().len() <= 6);
+    assert_eq!(outcome.status, Status::Partial);
+    assert_eq!(outcome.findings, 0);
+    assert!(outcome.diagnostics.len() <= 6);
     assert!(
         outcome
-            .diagnostics()
+            .diagnostics
             .iter()
-            .all(|diagnostic| diagnostic.code() == DiagnosticCode::LimitExceeded)
+            .all(|diagnostic| diagnostic.code == DiagnosticCode::LimitExceeded)
     );
-    let diagnostics = serde_json::to_value(outcome.diagnostics()).unwrap();
+    let diagnostics = serde_json::to_value(&outcome.diagnostics).unwrap();
     assert_eq!(
         diagnostics
             .as_array()
@@ -215,7 +211,7 @@ fn certificate_depth_rejections_spend_the_shared_entry_and_diagnostic_budget() {
             .unwrap()
             .validate(&output, false)
             .unwrap()
-            .component_count(),
+            .component_count,
         0
     );
 }
@@ -240,10 +236,10 @@ fn certificate_relative_application_targets_use_working_directory_without_follow
 
         let outcome = certificates::collect(&job, &context(), &mut output).unwrap();
 
-        assert_eq!(outcome.status(), Status::Collected);
-        assert_eq!(outcome.findings(), 1);
+        assert_eq!(outcome.status, Status::Collected);
+        assert_eq!(outcome.findings, 1);
         let summary = Validator::new().unwrap().validate(&output, false).unwrap();
-        assert_eq!(summary.component_count(), 3);
+        assert_eq!(summary.component_count, 3);
         let document: Value = serde_json::from_slice(&output).unwrap();
         let certificate = document["components"]
             .as_array()
@@ -272,9 +268,9 @@ fn certificate_relative_application_targets_use_working_directory_without_follow
             )
             .unwrap();
 
-        assert!(!report.is_unsuccessful());
+        assert!(!report.unsuccessful);
         let manifest: Value =
-            serde_json::from_slice(&fs::read(report.directory().join("manifest.json")).unwrap())
+            serde_json::from_slice(&fs::read(report.directory.join("manifest.json")).unwrap())
                 .unwrap();
         let expected_target = if target == Path::new(".") {
             cwd.as_path()
@@ -294,12 +290,9 @@ fn certificate_relative_application_targets_use_working_directory_without_follow
     )
     .unwrap();
 
-    assert_eq!(outcome.status(), Status::Partial);
-    assert_eq!(outcome.findings(), 0);
-    assert_eq!(
-        outcome.diagnostics()[0].code(),
-        DiagnosticCode::SymlinkRefused
-    );
+    assert_eq!(outcome.status, Status::Partial);
+    assert_eq!(outcome.findings, 0);
+    assert_eq!(outcome.diagnostics[0].code, DiagnosticCode::SymlinkRefused);
 }
 
 #[test]
@@ -331,10 +324,9 @@ fn certificate_host_provenance_keeps_an_empty_target() {
         )
         .unwrap();
 
-    assert!(!report.is_unsuccessful());
+    assert!(!report.unsuccessful);
     let manifest: Value =
-        serde_json::from_slice(&fs::read(report.directory().join("manifest.json")).unwrap())
-            .unwrap();
+        serde_json::from_slice(&fs::read(report.directory.join("manifest.json")).unwrap()).unwrap();
     assert!(manifest["results"][0].get("target").is_none());
     assert_eq!(manifest["results"][0]["findings"], 1);
 }
@@ -412,18 +404,18 @@ fn import_preserves_bytes_graph_and_unverified_provenance() {
 
     assert_eq!(output, IMPORT);
     assert_eq!(fs::read(&path).unwrap(), IMPORT);
-    assert_eq!(outcome.status(), Status::Collected);
-    assert_eq!(outcome.findings(), 1);
-    assert_eq!(outcome.coverage(), Coverage::ProducerDeclaredUnverified);
-    assert_eq!(outcome.evidence()["sourcePath"], json!(path));
+    assert_eq!(outcome.status, Status::Collected);
+    assert_eq!(outcome.findings, 1);
+    assert_eq!(outcome.coverage, Coverage::ProducerDeclaredUnverified);
+    assert_eq!(outcome.evidence["sourcePath"], json!(path));
     assert_eq!(
-        outcome.evidence()["sourceSHA256"],
+        outcome.evidence["sourceSHA256"],
         "f0c6554e7164cb9b11d221eb10553719657137a1a66890ef2beac9a648a9b7f3"
     );
-    assert_eq!(outcome.evidence()["origin"], "imported");
-    assert_eq!(outcome.evidence()["discovery"], "not-observed-locally");
+    assert_eq!(outcome.evidence["origin"], "imported");
+    assert_eq!(outcome.evidence["discovery"], "not-observed-locally");
     assert_eq!(
-        outcome.evidence()["applicationAssociation"],
+        outcome.evidence["applicationAssociation"],
         "configuration-declared-not-verified"
     );
 
@@ -503,8 +495,8 @@ fn import_rejects_ambiguous_json_and_non_cbom_components() {
 
     let outcome = import::collect(&import_job(&path), &context(), &mut Vec::new()).unwrap();
 
-    assert_eq!(outcome.status(), Status::NoFindings);
-    assert_eq!(outcome.findings(), 0);
+    assert_eq!(outcome.status, Status::NoFindings);
+    assert_eq!(outcome.findings, 0);
 }
 
 #[test]
@@ -560,13 +552,13 @@ fn certificates_deduplicate_bundle_and_der_and_keep_identity_opt_in() {
 
     let outcome = certificates::collect(&job, &context(), &mut output).unwrap();
 
-    assert_eq!(outcome.status(), Status::Collected);
-    assert_eq!(outcome.findings(), 1);
-    assert_eq!(outcome.coverage(), Coverage::DeclaredScope);
-    assert!(outcome.diagnostics().is_empty());
+    assert_eq!(outcome.status, Status::Collected);
+    assert_eq!(outcome.findings, 1);
+    assert_eq!(outcome.coverage, Coverage::DeclaredScope);
+    assert!(outcome.diagnostics.is_empty());
 
     let summary = Validator::new().unwrap().validate(&output, false).unwrap();
-    assert_eq!(summary.component_count(), 3);
+    assert_eq!(summary.component_count, 3);
     let document: Value = serde_json::from_slice(&output).unwrap();
     let components = document["components"].as_array().unwrap();
     assert_eq!(components.len(), 3);
@@ -675,10 +667,10 @@ fn certificate_algorithm_assets_cover_rsa_ec_and_ed25519_with_resolved_roles() {
     )
     .unwrap();
 
-    assert_eq!(outcome.status(), Status::Collected);
-    assert_eq!(outcome.findings(), 3);
+    assert_eq!(outcome.status, Status::Collected);
+    assert_eq!(outcome.findings, 3);
     let summary = Validator::new().unwrap().validate(&output, false).unwrap();
-    assert_eq!(summary.component_count(), 9);
+    assert_eq!(summary.component_count, 9);
     let document: Value = serde_json::from_slice(&output).unwrap();
     let components = document["components"].as_array().unwrap();
     assert_eq!(components.len(), 9);
@@ -752,13 +744,13 @@ fn certificate_traversal_refuses_links_in_roots_ancestors_and_children() {
         )
         .unwrap();
 
-        assert_eq!(outcome.status(), Status::Partial);
-        assert_eq!(outcome.findings(), 0);
+        assert_eq!(outcome.status, Status::Partial);
+        assert_eq!(outcome.findings, 0);
         assert!(
             outcome
-                .diagnostics()
+                .diagnostics
                 .iter()
-                .any(|diagnostic| diagnostic.code() == DiagnosticCode::SymlinkRefused)
+                .any(|diagnostic| diagnostic.code == DiagnosticCode::SymlinkRefused)
         );
     }
 
@@ -771,8 +763,8 @@ fn certificate_traversal_refuses_links_in_roots_ancestors_and_children() {
 
     let outcome = certificates::collect(&job, &context(), &mut Vec::new()).unwrap();
 
-    assert_eq!(outcome.status(), Status::Partial);
-    assert_eq!(outcome.findings(), 0);
+    assert_eq!(outcome.status, Status::Partial);
+    assert_eq!(outcome.findings, 0);
 }
 
 #[test]
@@ -811,15 +803,12 @@ fn certificate_coverage_reports_malformed_missing_oversize_and_fifo() {
         )
         .unwrap();
 
-        assert_eq!(outcome.status(), Status::Partial);
-        assert_eq!(outcome.findings(), 0);
-        assert_eq!(outcome.diagnostics().len(), 1);
-        assert_eq!(outcome.diagnostics()[0].code(), expected);
+        assert_eq!(outcome.status, Status::Partial);
+        assert_eq!(outcome.findings, 0);
+        assert_eq!(outcome.diagnostics.len(), 1);
+        assert_eq!(outcome.diagnostics[0].code, expected);
         assert_eq!(
-            validator
-                .validate(&output, false)
-                .unwrap()
-                .component_count(),
+            validator.validate(&output, false).unwrap().component_count,
             0
         );
     }
@@ -833,12 +822,9 @@ fn certificate_coverage_reports_malformed_missing_oversize_and_fifo() {
     )
     .unwrap();
 
-    assert_eq!(outcome.status(), Status::NoFindings);
+    assert_eq!(outcome.status, Status::NoFindings);
     assert_eq!(
-        validator
-            .validate(&output, false)
-            .unwrap()
-            .component_count(),
+        validator.validate(&output, false).unwrap().component_count,
         0
     );
 
@@ -854,13 +840,10 @@ fn certificate_coverage_reports_malformed_missing_oversize_and_fifo() {
     )
     .unwrap();
 
-    assert_eq!(outcome.status(), Status::Partial);
-    assert_eq!(outcome.findings(), 1);
+    assert_eq!(outcome.status, Status::Partial);
+    assert_eq!(outcome.findings, 1);
     assert_eq!(
-        validator
-            .validate(&output, false)
-            .unwrap()
-            .component_count(),
+        validator.validate(&output, false).unwrap().component_count,
         3
     );
 }
@@ -882,13 +865,13 @@ fn certificate_depth_is_bounded() {
     )
     .unwrap();
 
-    assert_eq!(outcome.status(), Status::Partial);
-    assert_eq!(outcome.findings(), 0);
+    assert_eq!(outcome.status, Status::Partial);
+    assert_eq!(outcome.findings, 0);
     assert!(
         outcome
-            .diagnostics()
+            .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code() == DiagnosticCode::LimitExceeded)
+            .any(|diagnostic| diagnostic.code == DiagnosticCode::LimitExceeded)
     );
 }
 
@@ -958,7 +941,7 @@ fn nix_current_and_legacy_metadata_preserve_graph_and_nar_semantics() {
         let mut output = Vec::new();
         document.write(&mut output).unwrap();
         let summary = Validator::new().unwrap().validate(&output, false).unwrap();
-        assert_eq!(summary.component_count(), 2);
+        assert_eq!(summary.component_count, 2);
         let document: Value = serde_json::from_slice(&output).unwrap();
         assert_eq!(document["components"].as_array().unwrap().len(), 2);
         assert_eq!(

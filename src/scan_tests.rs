@@ -15,11 +15,11 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::bom::validation::Validator;
-use crate::collection_context::CollectionContext;
-use crate::collection_outcome::CollectionOutcome;
+use crate::collection::context::CollectionContext;
+use crate::collection::failure::{Failure, FailureKind};
+use crate::collection::outcome::{CollectionOutcome, ExecutionScope};
 use crate::collectors::external;
 use crate::config::Config;
-use crate::failure::{Failure, FailureKind};
 use crate::job::{Backend, InventoryKind, Job, Name, Scope, Target};
 use crate::output::{JobResult, Manifest, OutputError, RunOutput};
 use crate::scan::{Scan, ScanError, ScanReport};
@@ -60,7 +60,7 @@ fn execute(config: &Config, root: &Path, cancelled: bool) -> ScanReport {
     Scan::new()
         .unwrap()
         .execute(
-            config.jobs(),
+            &config.jobs,
             root,
             Duration::from_secs(10),
             Arc::new(AtomicBool::new(cancelled)),
@@ -113,11 +113,11 @@ fn successful_scan_publishes_validated_artifact_hash_and_private_v2_manifest() {
 
     let report = execute(&config, &root, false);
 
-    assert!(!report.is_unsuccessful());
-    assert_eq!(report.directory().parent(), Some(root.as_path()));
+    assert!(!report.unsuccessful);
+    assert_eq!(report.directory.parent(), Some(root.as_path()));
     assert_eq!(entries(&root).len(), 2); // Lock and retained run directory.
 
-    let document = manifest(report.directory());
+    let document = manifest(&report.directory);
     assert_eq!(document["version"], 2);
     assert_eq!(document["bommerVersion"], env!("CARGO_PKG_VERSION"));
     assert_eq!(document["validation"], "json-schema-offline");
@@ -144,15 +144,15 @@ fn successful_scan_publishes_validated_artifact_hash_and_private_v2_manifest() {
         .unwrap();
     }
     assert_eq!(result["artifact"], "host.packages.sbom.cdx.json");
-    let bytes = fs::read(report.directory().join("host.packages.sbom.cdx.json")).unwrap();
+    let bytes = fs::read(report.directory.join("host.packages.sbom.cdx.json")).unwrap();
     assert_eq!(bytes, BOM.as_bytes());
     assert_eq!(result["sha256"], hex::encode(Sha256::digest(&bytes)));
     let validated = Validator::new().unwrap().validate(&bytes, true).unwrap();
-    assert_eq!(validated.component_count(), 1);
-    assert_eq!(validated.spec_version(), "1.6");
+    assert_eq!(validated.component_count, 1);
+    assert_eq!(validated.version, "1.6");
 
     assert_eq!(
-        entries(report.directory()),
+        entries(&report.directory),
         [
             "host.packages.sbom.cdx.json",
             "host.packages.sbom.stderr.log",
@@ -162,9 +162,9 @@ fn successful_scan_publishes_validated_artifact_hash_and_private_v2_manifest() {
 
     assert_private(&root, 0o700);
     assert_private(&root.join(".lock"), 0o600);
-    assert_private(report.directory(), 0o700);
-    for name in entries(report.directory()) {
-        assert_private(&report.directory().join(name), 0o600);
+    assert_private(&report.directory, 0o700);
+    for name in entries(&report.directory) {
+        assert_private(&report.directory.join(name), 0o600);
     }
 }
 
@@ -191,8 +191,8 @@ fn invalid_collector_output_is_not_published_and_candidates_are_removed() {
             false,
         );
 
-        assert!(report.is_unsuccessful(), "{name}");
-        let document = manifest(report.directory());
+        assert!(report.unsuccessful, "{name}");
+        let document = manifest(&report.directory);
         assert_eq!(document["results"].as_array().unwrap().len(), 1);
         assert_failed(&document["results"][0]);
         assert_eq!(
@@ -200,7 +200,7 @@ fn invalid_collector_output_is_not_published_and_candidates_are_removed() {
             json!({"kind": "validation"})
         );
         assert_eq!(
-            entries(report.directory()),
+            entries(&report.directory),
             ["host.invalid.sbom.stderr.log", "manifest.json"]
         );
     }
@@ -223,8 +223,8 @@ fn failed_job_preserves_stderr_and_does_not_prevent_the_next_job() {
 
     let report = execute(&config, &temporary.path().join("output"), false);
 
-    assert!(report.is_unsuccessful());
-    let document = manifest(report.directory());
+    assert!(report.unsuccessful);
+    let document = manifest(&report.directory);
     let results = document["results"].as_array().unwrap();
     assert_eq!(results.len(), 2);
     assert_eq!(results[0]["inventory"], "first");
@@ -239,20 +239,20 @@ fn failed_job_preserves_stderr_and_does_not_prevent_the_next_job() {
     assert_eq!(results[1]["findings"], 1);
     assert_eq!(results[1]["artifact"], "host.second.sbom.cdx.json");
     assert_eq!(
-        fs::read(report.directory().join("host.second.sbom.cdx.json")).unwrap(),
+        fs::read(report.directory.join("host.second.sbom.cdx.json")).unwrap(),
         BOM.as_bytes()
     );
 
     assert_eq!(
-        fs::read_to_string(report.directory().join("host.first.sbom.stderr.log")).unwrap(),
+        fs::read_to_string(report.directory.join("host.first.sbom.stderr.log")).unwrap(),
         "first collector failed\n"
     );
     assert_eq!(
-        fs::read_to_string(report.directory().join("host.second.sbom.stderr.log")).unwrap(),
+        fs::read_to_string(report.directory.join("host.second.sbom.stderr.log")).unwrap(),
         "second collector ran\n"
     );
     assert_eq!(
-        entries(report.directory()),
+        entries(&report.directory),
         [
             "host.first.sbom.stderr.log",
             "host.second.sbom.cdx.json",
@@ -277,8 +277,8 @@ fn missing_certificates_retain_a_valid_empty_partial_artifact() {
 
     let report = execute(&config, &temporary.path().join("output"), false);
 
-    assert!(report.is_unsuccessful());
-    let document = manifest(report.directory());
+    assert!(report.unsuccessful);
+    let document = manifest(&report.directory);
     assert_eq!(document["results"].as_array().unwrap().len(), 1);
     let result = &document["results"][0];
     assert_eq!(result["status"], "partial");
@@ -292,13 +292,13 @@ fn missing_certificates_retain_a_valid_empty_partial_artifact() {
     assert!(result.get("error").is_none());
 
     assert_eq!(result["artifact"], "host.certificates.cbom.cdx.json");
-    let bytes = fs::read(report.directory().join("host.certificates.cbom.cdx.json")).unwrap();
+    let bytes = fs::read(report.directory.join("host.certificates.cbom.cdx.json")).unwrap();
     assert_eq!(result["sha256"], hex::encode(Sha256::digest(&bytes)));
     let validated = Validator::new().unwrap().validate(&bytes, false).unwrap();
-    assert_eq!(validated.component_count(), 0);
-    assert_eq!(result["specVersion"], validated.spec_version());
+    assert_eq!(validated.component_count, 0);
+    assert_eq!(result["specVersion"], validated.version);
     assert_eq!(
-        entries(report.directory()),
+        entries(&report.directory),
         [
             "host.certificates.cbom.cdx.json",
             "host.certificates.cbom.stderr.log",
@@ -323,9 +323,9 @@ fn pre_cancelled_scan_records_all_failures_without_launching_collectors() {
 
     let report = execute(&config, &temporary.path().join("output"), true);
 
-    assert!(report.is_unsuccessful());
+    assert!(report.unsuccessful);
     assert!(!marker.exists());
-    let document = manifest(report.directory());
+    let document = manifest(&report.directory);
     let results = document["results"].as_array().unwrap();
     assert_eq!(results.len(), 2);
     for (result, name) in results.iter().zip(["first", "second"]) {
@@ -335,7 +335,7 @@ fn pre_cancelled_scan_records_all_failures_without_launching_collectors() {
         assert_eq!(
             fs::read(
                 report
-                    .directory()
+                    .directory
                     .join(format!("host.{name}.sbom.stderr.log"))
             )
             .unwrap(),
@@ -343,7 +343,7 @@ fn pre_cancelled_scan_records_all_failures_without_launching_collectors() {
         );
     }
     assert_eq!(
-        entries(report.directory()),
+        entries(&report.directory),
         [
             "host.first.sbom.stderr.log",
             "host.second.sbom.stderr.log",
@@ -389,8 +389,8 @@ fn held_output_lock_returns_typed_error_without_creating_a_run() {
         )
         .unwrap();
 
-    assert!(!report.is_unsuccessful());
-    assert_eq!(manifest(report.directory())["results"], json!([]));
+    assert!(!report.unsuccessful);
+    assert_eq!(manifest(&report.directory)["results"], json!([]));
 }
 
 #[test]
@@ -419,7 +419,7 @@ fn checkpoints_replace_complete_manifests_and_unpublished_candidates_are_cleaned
 
     assert!(!candidate_path.exists());
 
-    let mut result = JobResult::pending(&config.jobs()[0]).unwrap();
+    let mut result = JobResult::pending(&config.jobs[0]).unwrap();
     result.fail(&"test-owned failure", Failure::new(FailureKind::Collection));
     result.finish().unwrap();
     checkpoint.record(result);
@@ -458,26 +458,26 @@ fn timed_out_scan_persists_timeout_instead_of_cancellation() {
     let report = Scan::new()
         .unwrap()
         .execute(
-            config.jobs(),
+            &config.jobs,
             &temporary.path().join("output"),
             Duration::from_secs(1),
             Arc::new(AtomicBool::new(false)),
         )
         .unwrap();
 
-    assert!(report.is_unsuccessful());
-    let document = manifest(report.directory());
+    assert!(report.unsuccessful);
+    let document = manifest(&report.directory);
     assert_failed(&document["results"][0]);
     assert_eq!(
         document["results"][0]["failure"],
         json!({"kind": "timeout"})
     );
     assert_eq!(
-        fs::read(report.directory().join("host.slow.sbom.stderr.log")).unwrap(),
+        fs::read(report.directory.join("host.slow.sbom.stderr.log")).unwrap(),
         b"waiting\n"
     );
     assert_eq!(
-        entries(report.directory()),
+        entries(&report.directory),
         ["host.slow.sbom.stderr.log", "manifest.json"]
     );
 }
@@ -502,7 +502,7 @@ fn active_cancellation_after_readiness_persists_cancelled_and_stderr() {
 
     let report = std::thread::scope(|scope| {
         let worker =
-            scope.spawn(|| scan.execute(config.jobs(), &root, Duration::from_secs(20), flag));
+            scope.spawn(|| scan.execute(&config.jobs, &root, Duration::from_secs(20), flag));
 
         let deadline = Instant::now() + Duration::from_secs(10);
         while !ready.exists() && Instant::now() < deadline && !worker.is_finished() {
@@ -516,8 +516,8 @@ fn active_cancellation_after_readiness_persists_cancelled_and_stderr() {
         result
     });
 
-    assert!(report.is_unsuccessful());
-    let document = manifest(report.directory());
+    assert!(report.unsuccessful);
+    let document = manifest(&report.directory);
     assert_eq!(document["results"].as_array().unwrap().len(), 1);
     assert_failed(&document["results"][0]);
     assert_eq!(
@@ -525,11 +525,11 @@ fn active_cancellation_after_readiness_persists_cancelled_and_stderr() {
         json!({"kind": "cancelled"})
     );
     assert_eq!(
-        fs::read(report.directory().join("host.active.sbom.stderr.log")).unwrap(),
+        fs::read(report.directory.join("host.active.sbom.stderr.log")).unwrap(),
         b"running\n"
     );
     assert_eq!(
-        entries(report.directory()),
+        entries(&report.directory),
         ["host.active.sbom.stderr.log", "manifest.json"]
     );
 }
@@ -546,8 +546,8 @@ fn oversized_scan_stdout_persists_stream_and_limit_without_an_artifact() {
 
     let report = execute(&config, &temporary.path().join("output"), false);
 
-    assert!(report.is_unsuccessful());
-    let document = manifest(report.directory());
+    assert!(report.unsuccessful);
+    let document = manifest(&report.directory);
     assert_failed(&document["results"][0]);
     assert_eq!(
         document["results"][0]["failure"],
@@ -556,11 +556,11 @@ fn oversized_scan_stdout_persists_stream_and_limit_without_an_artifact() {
         })
     );
     assert_eq!(
-        fs::read(report.directory().join("host.large.sbom.stderr.log")).unwrap(),
+        fs::read(report.directory.join("host.large.sbom.stderr.log")).unwrap(),
         b"large output\n"
     );
     assert_eq!(
-        entries(report.directory()),
+        entries(&report.directory),
         ["host.large.sbom.stderr.log", "manifest.json"]
     );
 }
@@ -585,14 +585,14 @@ fn relative_certificate_target_and_dot_path_record_the_effective_absolute_target
 
     let report = execute(&config, &temporary.path().join("output"), false);
 
-    assert!(!report.is_unsuccessful());
-    let document = manifest(report.directory());
+    assert!(!report.unsuccessful);
+    let document = manifest(&report.directory);
     let result = &document["results"][0];
     assert_eq!(result["status"], "collected");
     assert_eq!(result["findings"], 1);
     assert_eq!(result["target"], certificates.to_str().unwrap());
     assert!(result.get("failure").is_none());
-    let bytes = fs::read(report.directory().join("app.cbom.cdx.json")).unwrap();
+    let bytes = fs::read(report.directory.join("app.cbom.cdx.json")).unwrap();
     Validator::new().unwrap().validate(&bytes, false).unwrap();
 }
 
@@ -628,7 +628,7 @@ fn non_utf8_certificate_paths_and_refused_symlink_preserve_partial_then_success(
     .unwrap();
     let executable = script(temporary.path(), "next", &format!("printf '%s' '{BOM}'"));
     let next = command_config(&[("next", &executable)]);
-    let jobs = [certificate_job, next.jobs()[0].clone()];
+    let jobs = [certificate_job, next.jobs[0].clone()];
 
     let report = Scan::new()
         .unwrap()
@@ -640,8 +640,8 @@ fn non_utf8_certificate_paths_and_refused_symlink_preserve_partial_then_success(
         )
         .unwrap();
 
-    assert!(report.is_unsuccessful());
-    let document = manifest(report.directory());
+    assert!(report.unsuccessful);
+    let document = manifest(&report.directory);
     let results = document["results"].as_array().unwrap();
     assert_eq!(results.len(), 2);
     let partial = &results[0];
@@ -663,9 +663,9 @@ fn non_utf8_certificate_paths_and_refused_symlink_preserve_partial_then_success(
         }])
     );
 
-    let bytes = fs::read(report.directory().join("certs.cbom.cdx.json")).unwrap();
+    let bytes = fs::read(report.directory.join("certs.cbom.cdx.json")).unwrap();
     let validated = Validator::new().unwrap().validate(&bytes, false).unwrap();
-    assert_eq!(validated.component_count(), 3);
+    assert_eq!(validated.component_count, 3);
     let sources = partial["evidence"]["sources"].as_object().unwrap();
     assert_eq!(sources.len(), 1);
     assert_eq!(
@@ -679,11 +679,11 @@ fn non_utf8_certificate_paths_and_refused_symlink_preserve_partial_then_success(
     assert_eq!(results[1]["status"], "collected");
     assert_eq!(results[1]["target"], "dir:/");
     assert_eq!(
-        fs::read(report.directory().join("host.next.sbom.cdx.json")).unwrap(),
+        fs::read(report.directory.join("host.next.sbom.cdx.json")).unwrap(),
         BOM.as_bytes()
     );
     assert_eq!(
-        entries(report.directory()),
+        entries(&report.directory),
         [
             "certs.cbom.cdx.json",
             "certs.cbom.stderr.log",
@@ -692,6 +692,37 @@ fn non_utf8_certificate_paths_and_refused_symlink_preserve_partial_then_success(
             "manifest.json"
         ]
     );
+}
+
+#[test]
+fn observed_scope_distinguishes_absent_and_explicitly_empty_values() {
+    let config = Config::parse(
+        &json!({
+            "version": 1, "output": {"directory": "unused"},
+            "applications": [{"name": "app", "target": {"type": "directory", "path": "/app"},
+                "sbom": {"enabled": true, "backend": "syft", "exclude": ["manual"]}}],
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let job = &config.jobs[0];
+
+    let mut result = JobResult::pending(job).unwrap();
+    result.observed_scope(&CollectionOutcome::external());
+    let document = serde_json::to_value(&result).unwrap();
+    assert_eq!(document["target"], "/app");
+    assert_eq!(document["exclude"], json!(["manual"]));
+
+    result.observed_scope(&CollectionOutcome {
+        scope: ExecutionScope {
+            target: Some(String::new()),
+            exclusions: Some(vec![]),
+        },
+        ..CollectionOutcome::external()
+    });
+    let document = serde_json::to_value(&result).unwrap();
+    assert!(document.get("target").is_none());
+    assert!(document.get("exclude").is_none());
 }
 
 #[test]
@@ -714,7 +745,7 @@ fn prepared_git_exclusions_are_preserved_by_output_publication() {
         "applications": [{"name": "app", "target": {"type": "directory", "path": target},
             "sbom": {"enabled": true, "backend": "syft", "exclude": ["manual", "manual"], "respect_gitignore": true}}],
     }).to_string()).unwrap();
-    let job = &config.jobs()[0];
+    let job = &config.jobs[0];
     let context = CollectionContext::new(Duration::from_secs(10), Arc::new(AtomicBool::new(false)));
 
     let (_, arguments, exclusions, effective_target) = external::prepare(job, &context).unwrap();
@@ -732,9 +763,13 @@ fn prepared_git_exclusions_are_preserved_by_output_publication() {
     let mut candidate = output.candidate().unwrap();
     candidate.write_all(BOM.as_bytes()).unwrap();
     let artifact = output.publish(job, candidate, BOM.as_bytes()).unwrap();
-    let outcome = CollectionOutcome::external()
-        .with_exclusions(exclusions)
-        .with_target(effective_target);
+    let outcome = CollectionOutcome {
+        scope: ExecutionScope {
+            target: Some(effective_target),
+            exclusions: Some(exclusions),
+        },
+        ..CollectionOutcome::external()
+    };
     let mut result = JobResult::pending(job).unwrap();
     result.complete(outcome, artifact, "1.6", 1, true);
     result.finish().unwrap();
