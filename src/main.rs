@@ -107,7 +107,12 @@ fn main() -> ExitCode {
         Ok(code) => code,
         Err(error) => {
             eprintln!("error: {}", terminal_error(&error));
-            ExitCode::FAILURE
+            match error {
+                CliError::Config(_) | CliError::Application(_) | CliError::Plan(_) => {
+                    ExitCode::from(2)
+                }
+                CliError::Scan(_) => ExitCode::FAILURE,
+            }
         }
     }
 }
