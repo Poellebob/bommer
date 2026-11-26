@@ -1,93 +1,83 @@
-# What A Bommer
+# 💥 What A Bommer
 
-Bommer collects software, hardware, and application cryptography inventories
-in CycloneDX format through configurable collectors.
+Collect software, hardware, and application cryptography inventories in **CycloneDX** format through configurable collectors.
 
-**Early development, not production-ready.** Syft is included in the development
-environment and flake. Built-in backends inventory explicit local Nix closures,
-observe X.509 certificates, and import trusted CBOM artifacts. Hardware collection
-requires an external collector; source-code cryptography scanner integration is
-a deferred proof of concept, not implemented.
+> [!CAUTION]
+> **Early development, not production-ready.** Most, if not all, of this code was written by AI. I will review, rewrite, and audit it by hand, but for now it is a proof of concept.
 
-> [!WARNING]
-> Most and if not all of this early code is written by AI.
-> I will go over all of it by hand and rewrite/audit it but as of now it is just a proof of concept.
+## Features
+
+| Area | Status |
+| --- | --- |
+| Software (SBOM) | Syft is bundled in the dev environment and flake |
+| Nix closures | Built-in backend for explicit local closures |
+| Certificates | Built-in X.509 observation |
+| Cryptography (CBOM) | Built-in import of trusted CBOM artifacts |
+| Hardware | Requires an external collector |
+| Source-code crypto scanning | Deferred proof of concept, not implemented |
 
 ## Quick Start
 
-Prebuilt binaries, `.deb`, and `.rpm` packages are available at the
-[releases page](https://codeberg.org/Poellebob/bommer/releases). They bundle
-no collectors and declare a weak `Recommends: syft` dependency; where distro
-repositories do not package syft, install Anchore's `.deb`/`.rpm` from
-[their releases](https://github.com/anchore/syft/releases) first. See the
-[packaging notes](docs/REFERENCE.md#packaging).
+**Prebuilt packages:** binaries, `.deb`, and `.rpm` are on the [releases page](https://codeberg.org/Poellebob/bommer/releases). They bundle no collectors and weakly recommend `syft`. If your distro doesn't package it, install Anchore's `.deb`/`.rpm` from [their releases](https://github.com/anchore/syft/releases) first. See the [packaging notes](docs/REFERENCE.md#packaging).
 
-For building from source you need Git and
-[Nix](https://nixos.org/download/) with flakes enabled.
+**From source:** you need Git and [Nix](https://nixos.org/download/) with flakes enabled.
 
 ```sh
 git clone https://codeberg.org/Poellebob/bommer.git
 cd bommer
-```
 
-Run a software inventory of this checkout using the supplied test configuration:
-
-```sh
 nix run . -- doctor --config examples/quickstart.yaml
-nix run . -- scan --config examples/quickstart.yaml
+nix run . -- scan   --config examples/quickstart.yaml
 ```
 
-Run these commands from the repository root. The configuration respects Git
-ignore rules and excludes development caches, build outputs, and previous results.
+Run from the repository root. The quickstart config respects Git ignore rules and skips caches, build outputs, and previous results.
 
-The scan prints a directory under `results/` containing the SBOM, collector log,
-and a version 2 manifest describing the run. CycloneDX 1.6/1.7 JSON is validated
-against embedded schemas offline; schema validity does not prove inventory
-completeness. Partial results are retained but cause exit code `1`.
-Manifest v2 retains human-readable `error` text and adds structured `failure`
-details for automation. Filesystem paths in JSON use a lossless tagged form when
-needed; see `path_encoding::path_text` in source.
+## Output
+
+Each scan prints a directory under `results/` containing:
+
+- the **SBOM**
+- a **collector log**
+- a **v2 manifest** describing the run
+
+Notes:
+
+- CycloneDX 1.6/1.7 JSON is validated offline against embedded schemas. A valid schema does not prove the inventory is complete.
+- Partial results are kept, but the exit code is `1`.
+- The manifest has human-readable `error` text plus structured `failure` details for automation.
+- Paths in JSON use a lossless tagged form when needed (see `path_encoding::path_text`).
 
 ## Development
 
-For development i strongly recommend using [devenv](https://devenv.sh/getting-started/),
-as it is the only ting used for environment management in this repo.
+I strongly recommend [devenv](https://devenv.sh/getting-started/), the only environment manager used in this repo. Inside `devenv shell`, run `just` for recipes:
 
-Inside `devenv shell`, use `just` for recipes:
+| Recipe | Purpose |
+| --- | --- |
+| `just check` | Formatting, static analysis, tests |
+| `just fmt` | Format Rust source |
+| `just build` | Build `dist/bommer` |
+| `just portable-test` | Test the static musl target |
+| `just schema-test` | Test embedded schemas and offline validation |
+| `just integration-test` | Run fixtures with fake collectors and Nix |
+| `just architecture-test` | Check module dependency boundaries |
 
-```sh
-just                   # List recipes
-just check             # Check formatting, run static analysis and tests
-just fmt               # Format Rust source
-just build             # Build dist/bommer
-just portable-test     # Run tests against the static musl target
-just schema-test       # Test embedded schemas and offline validation
-just integration-test  # Run fixtures with fake collectors and Nix
-just architecture-test # Check module dependency boundaries
-```
+**Builds**
 
-The default build and flake package use Rust with the committed `Cargo.lock`.
-The Go prototype has been removed. Cargo
-builds, Clippy, and tests use `--locked`; `just build` publishes `dist/bommer`,
-also used by `just deb` and `just rpm` through nFPM. Native packages use a static
-x86_64 musl executable with no Nix-store loader dependency. The Nix package uses
-its native GNU toolchain. Installed-package and distro testing remain release work.
+- Cargo builds, Clippy, and tests use `--locked` with the committed `Cargo.lock`.
+- `just build` publishes `dist/bommer`, which `just deb` and `just rpm` package through nFPM.
+- Native packages use a static x86_64 musl executable with no Nix-store loader dependency; the Nix package uses its native GNU toolchain.
+- Installed-package and distro testing are still release work.
 
-Unit tests live inline in their owner modules; `tests/architecture.rs` checks
-cross-repository boundaries and `tests/cli.rs` tests the executable as a black box.
-Tests do not require Nix or select a host closure automatically. Rust native tests
-use fixtures and fake Nix executables; `just integration-test` does not run live
-Nix, even when `BOMMER_TEST_NIX_ROOT` is set. Any live check must be explicitly
-requested with an existing local closure root. The removed Go prototype's
-`BOMMER_TEST_NIX_ROOT` gate does not enable Rust tests. Historical Go parity and
-the supported OS matrix remain verification work, not claims made by the native
-test suite.
+**Tests**
 
-## Further Reading
+- Unit tests live inline in their modules; `tests/architecture.rs` checks cross-module boundaries and `tests/cli.rs` tests the binary as a black box.
+- Tests use fixtures and fake Nix executables, and never select a host closure automatically. `just integration-test` does not run live Nix, even if `BOMMER_TEST_NIX_ROOT` is set. A live check must be requested explicitly with an existing local closure root.
+- Historical Go parity and the supported OS matrix remain verification work, not claims made by the test suite.
+
+## Docs
 
 - [Configuration, collectors, results, and packaging](docs/REFERENCE.md)
 - [Configuration template](examples/config.yaml)
 - [Native inventory examples](examples/native.yaml) (choose local scopes first)
 - [Implementation status and roadmap](docs/IMPLEMENTATION.md)
-- [Rust implementation status](docs/IMPLEMENTATION.md)
 - [Rust style guide](docs/STYLE.md)
