@@ -15,7 +15,8 @@ a deferred proof of concept, not implemented.
 
 ## Quick Start
 
-You need Git, [Nix](https://nixos.org/download/) with flakes enabled.
+You need Git and [Nix](https://nixos.org/download/) with flakes enabled.
+> [INFO]
 > deb and rpm is being worked on. They bundle no collectors and declare a
 > weak `Recommends: syft` dependency; where distro repositories do not
 > package syft, install Anchore's `.deb`/`.rpm` from
@@ -30,7 +31,7 @@ cd bommer
 Run a software inventory of this checkout using the supplied test configuration:
 
 ```sh
-nix run . --  doctor --config examples/quickstart.yaml
+nix run . -- doctor --config examples/quickstart.yaml
 nix run . -- scan --config examples/quickstart.yaml
 ```
 
