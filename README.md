@@ -15,13 +15,15 @@ a deferred proof of concept, not implemented.
 
 ## Quick Start
 
-You need Git and [Nix](https://nixos.org/download/) with flakes enabled.
-> [INFO]
-> deb and rpm is being worked on. They bundle no collectors and declare a
-> weak `Recommends: syft` dependency; where distro repositories do not
-> package syft, install Anchore's `.deb`/`.rpm` from
-> [their releases](https://github.com/anchore/syft/releases) first.
-> See the [packaging notes](docs/REFERENCE.md#packaging).
+Prebuilt binaries, `.deb`, and `.rpm` packages are available at the
+[releases page](https://codeberg.org/Poellebob/bommer/releases). They bundle
+no collectors and declare a weak `Recommends: syft` dependency; where distro
+repositories do not package syft, install Anchore's `.deb`/`.rpm` from
+[their releases](https://github.com/anchore/syft/releases) first. See the
+[packaging notes](docs/REFERENCE.md#packaging).
+
+For building from source you need Git and
+[Nix](https://nixos.org/download/) with flakes enabled.
 
 ```sh
 git clone https://codeberg.org/Poellebob/bommer.git

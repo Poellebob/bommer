@@ -296,6 +296,8 @@ just rpm
 
 Native package recipes default to version `0.1.0-dev`; override it with, for
 example, `VERSION=0.1.0 just deb`. They build the CLI before packaging it.
+Premade binaries and native packages are published at the
+[releases page](https://codeberg.org/Poellebob/bommer/releases).
 
 The flake wraps Bommer with Syft, Git, and Nix. Native packages currently contain the CLI,
 disabled example configuration, and systemd units, **not collector binaries**;
