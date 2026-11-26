@@ -1,0 +1,125 @@
+# Rust Style Guide
+
+## Architecture
+
+Bommer is one Cargo package with one binary. Keep the dependency graph in
+`docs/IMPLEMENTATION.md` acyclic. A module never depends on its parent or any ancestor,
+including through qualified paths, aliases, callbacks, or shared types. Parents
+compose children. Children return results instead of calling their coordinator.
+Module containment is not a dependency. These production boundaries exclude
+test-only code: unit tests belong in inline `#[cfg(test)] mod tests` in their owner
+modules. Cross-repository architecture checks belong in `tests/architecture.rs`;
+black-box executable tests belong in `tests/cli.rs`.
+
+Use composition and abstraction to expose cohesive responsibilities, not to split
+code mechanically. Group related modules under meaningful namespaces: `collection`
+owns `context`, `outcome`, and `failure`; `config` owns `document` and `duration`;
+`bom` owns `document`, `validation`, and `schemas`. Do not introduce a trait
+hierarchy, plugin framework, or generic abstraction without a concrete second use.
+Changes to dependency direction must be documented.
+
+Shared contracts have explicit module owners, not a catch-all model or an
+implementation module that peers must import. `job` owns job contracts;
+`collection::context`, `collection::outcome`, and `collection::failure` own
+execution and result contracts; `manifest` owns reporting contracts.
+`collectors::certificates::types` owns the shared `Observation`, `Discovery`, and
+`Assets` contracts; `assets` and `discovery` own the operations using them.
+Keep every inherent and trait `impl` for a project type in the file and module
+that defines that type, never in a consumer or child module.
+
+Use explicit `crate::...` imports for internal owners, including siblings and
+test imports; do not use `use super` or `use super::*`. Strict JSON decoding
+belongs in the independent root `json` module, shared by BOM validation and
+import. The collectors parent may depend on `process` to classify typed error
+sources into `collection::failure::Failure`; neither error classification nor
+persistence should parse `Display` strings. `scan` accepts jobs, an output root,
+and a timeout rather than depending on `config` or `plan`. `manifest` does not
+depend on `output`; `doctor` does not depend on scan execution or persistence.
+
+## Interfaces
+
+Use structs, enums, and owner-local `impl` blocks to expose meaningful operations.
+Do not add mechanical getters and setters around ordinary data; use directly
+accessible fields where no invariant or resource ownership needs protection.
+Constructors enforce invariants; do not expose mutable fields that bypass them.
+Read-only accessors are justified for validated values such as `Name` and a
+`CommandSpecification` executable, and for owned output resources such as a `RunOutput`
+directory. These are not a reason to wrap every field. Use enums for finite states
+and error categories. Do not obscure orchestration:
+scan execution should read as collection, validation, publication, and recording.
+
+Keep errors typed across boundaries, preserving useful structured context and source
+errors. User-facing formatting is presentation, not an interface to test against.
+Never put scanned certificate/key contents or raw untrusted stderr in terminal errors.
+Manifest v2's additive `failure` object exposes a stable `kind` and applicable
+`exitCode`, `stream`, and `limit` fields. Preserve human-readable `error` text, but
+assert structured fields rather than wording.
+
+Use `path_encoding::path_text` for filesystem paths represented in JSON. Valid UTF-8 is
+unchanged except that literals starting with `bommer:unix-bytes:` or `bommer:utf8:`
+are escaped as `bommer:utf8:<literal>`. Invalid UTF-8 paths are represented as
+`bommer:unix-bytes:<hex>` for the entire original byte sequence. Do not use lossy
+UTF-8 conversion or serialize raw `PathBuf` values at these JSON boundaries.
+
+Use ordinary synchronous functions unless concurrency solves an observed need.
+Keep functions together until extraction makes ownership or reuse clearer. Avoid
+compatibility layers except for actual configuration, persisted artifacts, and CLI
+contracts. Do not add fallback collectors that silently change inventory coverage.
+
+Keep each function focused on one responsibility, and keep the main flow flat.
+Reject exceptional cases early with guard clauses, early returns, and `continue`;
+let normal and default behavior proceed at the lowest indentation level. Extract a
+helper only when it names a real responsibility, never merely to shorten a
+function. Do not flatten state machines, algorithm alternatives, or shared
+finalization when doing so would change error precedence, skip cleanup, or
+obscure the sequence of operations.
+
+## Layout
+
+Whitespace communicates intent. Keep related statements together and use blank
+lines to separate logical phases, independent operations, and neighboring methods.
+In tests, distinguish setup, execution, and assertions without section comments.
+Do not mechanically separate every statement or extract helpers just to shorten
+a function. Keep structs and enums above implementations and functions.
+
+Use descriptive variable, field, attribute, and method names. Do not abbreviate
+words merely to shorten identifiers. Keep established standards such as CLI, JSON,
+BOM, PEM, DER, OID, UTF-8, SHA-256, stdout, and stderr, and names required by
+external APIs. Preserve CLI flags and serialized field names when improving
+internal names.
+
+## Resource Safety
+
+One owner controls each lock, temporary artifact, process group, and run session.
+Use RAII for cleanup and explicit normal-path child reaping. Run argv directly,
+never through shell expansion. Apply deadlines, cancellation, and output bounds.
+Never publish an artifact before offline validation and hashing succeed.
+External BOM output has a 64 MiB bound and stderr logs a 1 MiB bound. Nix query
+stderr has a 16 KiB bound; overflow is a typed failure, not silent truncation.
+
+Certificate paths require descriptor-relative no-follow traversal, including every
+ancestor. Do not weaken filesystem safety to make a test pass. Coverage gaps are
+diagnostics and partial outcomes, not proof of absence. Imported producer claims
+remain explicitly unverified.
+
+## Behavioral Tests
+
+Each test defines its input and expected semantic result, directly or through
+test-owned fixtures. Never generate expected values using the production operation
+being tested. Never test a constant-return function against its own literal.
+
+Assert typed return/error variants and structured fields. For integration tests,
+assert observable behavior: artifact publication, permissions, lock exclusion,
+process cleanup, exact imported bytes, and graph semantics. Do not assert user-facing
+wording, help text, `Display`, incidental JSON layout, or private implementation shape.
+
+Helpers may handle setup, not hide the scenario or calculate its expected answer.
+Use deterministic synchronization instead of arbitrary sleeps. Host inventory,
+network scanners, and live Nix tests are explicitly opt-in; normal tests use fixtures.
+
+## Checks
+
+Use `cargo fmt`, strict Clippy, behavioral tests, and the dependency-boundary check.
+Do not suppress warnings globally to conceal unfinished implementation. Comments
+explain non-obvious constraints, not assignments. Keep documentation honest about
+coverage and unsupported behavior.

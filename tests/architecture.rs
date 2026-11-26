@@ -1,0 +1,1215 @@
+//! Source-level architecture checks, not a replacement for rustc name resolution.
+//! Macro token bodies/expansions, include!, method dispatch, and inferred types are
+//! not resolved. Non-test cfg branches are inspected conservatively, not evaluated.
+//! This models module/item imports, not local variable or generic-parameter bindings.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+use syn::visit::{self, Visit};
+
+// The empty module path denotes main, the crate root.
+type Name = Vec<String>;
+type Edges = BTreeSet<(Name, Name)>;
+
+#[derive(Clone, Debug)]
+struct Import {
+    path: Name,
+    alias: Option<String>,
+}
+
+#[derive(Default)]
+struct Scope {
+    parent: Option<usize>,
+    module: Name,
+    names: BTreeSet<String>,
+    imports: Vec<Import>,
+}
+
+#[derive(Default)]
+struct SourceGraph {
+    modules: BTreeMap<Name, usize>,
+    scopes: Vec<Scope>,
+    paths: Vec<(usize, Name)>,
+    types: BTreeSet<Name>,
+    type_aliases: BTreeMap<Name, (usize, Name)>,
+    implementations: Vec<(usize, Name)>,
+}
+
+fn is_test_only(attributes: &[syn::Attribute]) -> bool {
+    attributes.iter().any(|attribute| {
+        if attribute.path().is_ident("test") {
+            return true;
+        }
+
+        if !attribute.path().is_ident("cfg") {
+            return false;
+        }
+
+        // Parse cfg syntax rather than looking for the word "test" in source.
+        attribute
+            .parse_args::<syn::Meta>()
+            .is_ok_and(|meta| match meta {
+                syn::Meta::Path(path) => path.is_ident("test"),
+                syn::Meta::List(list) if list.path.is_ident("all") => {
+                    use syn::parse::Parser;
+
+                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated
+                        .parse2(list.tokens)
+                        .is_ok_and(|items| {
+                            items.iter().any(
+                            |item| matches!(item, syn::Meta::Path(path) if path.is_ident("test")),
+                        )
+                        })
+                }
+                _ => false,
+            })
+    })
+}
+
+fn collect_imports(tree: &syn::UseTree, prefix: Name, output: &mut Vec<Import>) {
+    match tree {
+        syn::UseTree::Path(path) => {
+            let mut prefix = prefix;
+            prefix.push(path.ident.to_string());
+            collect_imports(&path.tree, prefix, output);
+        }
+        syn::UseTree::Group(group) => {
+            for tree in &group.items {
+                collect_imports(tree, prefix.clone(), output);
+            }
+        }
+        syn::UseTree::Glob(_) => output.push(Import {
+            path: prefix,
+            alias: None,
+        }),
+        syn::UseTree::Name(name) => {
+            let mut path = prefix;
+            let alias = if name.ident == "self" {
+                path.last().cloned()
+            } else {
+                path.push(name.ident.to_string());
+                Some(name.ident.to_string())
+            };
+
+            output.push(Import { path, alias });
+        }
+        syn::UseTree::Rename(rename) => {
+            let mut path = prefix;
+
+            if rename.ident != "self" {
+                path.push(rename.ident.to_string());
+            }
+
+            output.push(Import {
+                path,
+                alias: Some(rename.rename.to_string()),
+            });
+        }
+    }
+}
+
+fn item_name(item: &syn::Item) -> Option<String> {
+    let identifier = match item {
+        syn::Item::Const(item) => &item.ident,
+        syn::Item::Enum(item) => &item.ident,
+        syn::Item::Fn(item) => &item.sig.ident,
+        syn::Item::Mod(item) => &item.ident,
+        syn::Item::Static(item) => &item.ident,
+        syn::Item::Struct(item) => &item.ident,
+        syn::Item::Trait(item) => &item.ident,
+        syn::Item::TraitAlias(item) => &item.ident,
+        syn::Item::Type(item) => &item.ident,
+        syn::Item::Union(item) => &item.ident,
+        _ => return None,
+    };
+
+    Some(identifier.to_string())
+}
+
+fn is_excluded_item(item: &syn::Item) -> bool {
+    match item {
+        syn::Item::Mod(item) => {
+            item.ident == "tests"
+                || item.ident.to_string().ends_with("_tests")
+                || is_test_only(&item.attrs)
+        }
+        syn::Item::Fn(item) => is_test_only(&item.attrs),
+        syn::Item::Use(item) => is_test_only(&item.attrs),
+        syn::Item::Const(item) => is_test_only(&item.attrs),
+        syn::Item::Enum(item) => is_test_only(&item.attrs),
+        syn::Item::ExternCrate(item) => is_test_only(&item.attrs),
+        syn::Item::ForeignMod(item) => is_test_only(&item.attrs),
+        syn::Item::Impl(item) => is_test_only(&item.attrs),
+        syn::Item::Macro(item) => is_test_only(&item.attrs),
+        syn::Item::Static(item) => is_test_only(&item.attrs),
+        syn::Item::Struct(item) => is_test_only(&item.attrs),
+        syn::Item::Trait(item) => is_test_only(&item.attrs),
+        syn::Item::TraitAlias(item) => is_test_only(&item.attrs),
+        syn::Item::Type(item) => is_test_only(&item.attrs),
+        syn::Item::Union(item) => is_test_only(&item.attrs),
+        _ => false,
+    }
+}
+
+impl SourceGraph {
+    fn load(root: &Path, read: &impl Fn(&Path) -> Result<String, String>) -> Result<Self, String> {
+        let mut graph = Self::default();
+        let source = read(root)?;
+        let file =
+            syn::parse_file(&source).map_err(|error| format!("{}: {error}", root.display()))?;
+
+        graph.collect_module(Vec::new(), file.items, root.parent().unwrap(), read)?;
+
+        Ok(graph)
+    }
+
+    fn add_scope(&mut self, module: Name, parent: Option<usize>, items: &[syn::Item]) -> usize {
+        let mut scope = Scope {
+            module,
+            parent,
+            ..Scope::default()
+        };
+
+        for item in items.iter().filter(|item| !is_excluded_item(item)) {
+            if let Some(name) = item_name(item) {
+                scope.names.insert(name);
+            }
+
+            if let syn::Item::Use(item) = item {
+                let prefix = if item.leading_colon.is_some() {
+                    vec!["::".to_owned()]
+                } else {
+                    Vec::new()
+                };
+
+                collect_imports(&item.tree, prefix, &mut scope.imports);
+            }
+
+            if let syn::Item::ExternCrate(item) = item {
+                scope.imports.push(Import {
+                    path: vec!["::".to_owned(), item.ident.to_string()],
+                    alias: Some(
+                        item.rename
+                            .as_ref()
+                            .map_or(&item.ident, |(_, alias)| alias)
+                            .to_string(),
+                    ),
+                });
+            }
+        }
+
+        let index = self.scopes.len();
+        self.scopes.push(scope);
+
+        index
+    }
+
+    fn collect_module(
+        &mut self,
+        name: Name,
+        items: Vec<syn::Item>,
+        directory: &Path,
+        read: &impl Fn(&Path) -> Result<String, String>,
+    ) -> Result<(), String> {
+        let scope = self.add_scope(name.clone(), None, &items);
+        self.modules.insert(name.clone(), scope);
+
+        for item in items.iter().filter(|item| !is_excluded_item(item)) {
+            if matches!(item, syn::Item::Struct(_) | syn::Item::Enum(_)) {
+                let mut owner = name.clone();
+                owner.push(item_name(item).unwrap());
+                self.types.insert(owner);
+            }
+
+            if let syn::Item::Type(alias) = item
+                && let syn::Type::Path(type_path) = alias.ty.as_ref()
+                && type_path.qself.is_none()
+                && type_path.path.leading_colon.is_none()
+            {
+                let mut owner = name.clone();
+                owner.push(alias.ident.to_string());
+                self.type_aliases.insert(
+                    owner,
+                    (
+                        scope,
+                        type_path
+                            .path
+                            .segments
+                            .iter()
+                            .map(|segment| segment.ident.to_string())
+                            .collect(),
+                    ),
+                );
+            }
+        }
+
+        for item in &items {
+            if is_excluded_item(item) {
+                continue;
+            }
+
+            if let syn::Item::Mod(module) = item {
+                let mut child = name.clone();
+                child.push(module.ident.to_string());
+
+                if let Some((_, items)) = &module.content {
+                    self.collect_module(
+                        child,
+                        items.clone(),
+                        &directory.join(module.ident.to_string()),
+                        read,
+                    )?;
+                } else {
+                    let explicit_path = module.attrs.iter().find_map(|attribute| {
+                        if !attribute.path().is_ident("path") {
+                            return None;
+                        }
+
+                        match &attribute.meta {
+                            syn::Meta::NameValue(value) => match &value.value {
+                                syn::Expr::Lit(syn::ExprLit {
+                                    lit: syn::Lit::Str(path),
+                                    ..
+                                }) => Some(path.value()),
+                                _ => None,
+                            },
+                            _ => None,
+                        }
+                    });
+
+                    let (path, source) = if let Some(path) = explicit_path {
+                        let path = directory.join(path);
+                        let source = read(&path)?;
+                        (path, source)
+                    } else {
+                        let flat_path = directory.join(format!("{}.rs", module.ident));
+                        let nested_path = directory.join(module.ident.to_string()).join("mod.rs");
+
+                        match (read(&flat_path), read(&nested_path)) {
+                            (Ok(source), Err(_)) => (flat_path, source),
+                            (Err(_), Ok(source)) => (nested_path, source),
+                            (Ok(_), Ok(_)) => {
+                                return Err(format!("ambiguous module: {}", module.ident));
+                            }
+                            (Err(error), Err(_)) => return Err(error),
+                        }
+                    };
+
+                    let file = syn::parse_file(&source)
+                        .map_err(|error| format!("{}: {error}", path.display()))?;
+                    let directory = if path.file_name().is_some_and(|name| name == "mod.rs") {
+                        path.parent().unwrap().to_path_buf()
+                    } else {
+                        path.with_extension("")
+                    };
+
+                    self.collect_module(child, file.items, &directory, read)?;
+                }
+            } else {
+                PathCollector { graph: self, scope }.visit_item(item);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn resolve(
+        &self,
+        scope: usize,
+        path: &[String],
+        seen: &mut BTreeSet<(usize, Name)>,
+        owners: &mut BTreeSet<Name>,
+    ) -> Option<Name> {
+        if path.is_empty() || !seen.insert((scope, path.to_vec())) {
+            return None;
+        }
+
+        let result = self.resolve_inner(scope, path, seen, owners);
+        seen.remove(&(scope, path.to_vec()));
+
+        result
+    }
+
+    fn resolve_inner(
+        &self,
+        scope: usize,
+        path: &[String],
+        seen: &mut BTreeSet<(usize, Name)>,
+        owners: &mut BTreeSet<Name>,
+    ) -> Option<Name> {
+        let current = &self.scopes[scope];
+        let mut rest = path;
+        let mut target = match rest[0].as_str() {
+            "::" => return None,
+            "crate" => {
+                rest = &rest[1..];
+                Vec::new()
+            }
+            "self" => {
+                rest = &rest[1..];
+                current.module.clone()
+            }
+            "super" => {
+                let mut target = current.module.clone();
+
+                while rest.first().is_some_and(|segment| segment == "super") {
+                    target.pop()?;
+                    rest = &rest[1..];
+                }
+
+                target
+            }
+            first => {
+                let mut lexical_scope = Some(scope);
+                let mut found = None;
+
+                while let Some(index) = lexical_scope {
+                    let candidate = &self.scopes[index];
+
+                    if candidate.names.contains(first) {
+                        // Block-local names shadow imports but are not module members.
+                        if candidate.parent.is_some() {
+                            return None;
+                        }
+
+                        let mut name = candidate.module.clone();
+                        name.push(first.to_owned());
+                        found = Some(name);
+                        break;
+                    }
+
+                    let named_import = candidate
+                        .imports
+                        .iter()
+                        .find(|import| import.alias.as_deref() == Some(first));
+
+                    if let Some(import) = named_import {
+                        // An external alias must not fall through to an internal name.
+                        found = Some(self.resolve(index, &import.path, seen, owners)?);
+                        owners.insert(candidate.module.clone());
+                        break;
+                    }
+
+                    for import in candidate
+                        .imports
+                        .iter()
+                        .filter(|import| import.alias.is_none())
+                    {
+                        if let Some(mut base) = self.resolve(index, &import.path, seen, owners) {
+                            if let Some(&module) = self.modules.get(&base) {
+                                if let Some(name) =
+                                    self.resolve(module, &[first.to_owned()], seen, owners)
+                                {
+                                    found = Some(name);
+                                    owners.insert(candidate.module.clone());
+                                    break;
+                                }
+                            } else {
+                                // Glob-imported enum variants belong to the enum's module.
+                                base.push(first.to_owned());
+                                found = Some(base);
+                                break;
+                            }
+                        }
+                    }
+
+                    if found.is_some() {
+                        break;
+                    }
+
+                    lexical_scope = candidate.parent;
+                }
+
+                rest = &rest[1..];
+                found?
+            }
+        };
+
+        for segment in rest {
+            if let Some(&module) = self.modules.get(&target) {
+                // Resolve re-exports and aliases in the module being traversed.
+                target = self.resolve(module, std::slice::from_ref(segment), seen, owners)?;
+            } else {
+                target.push(segment.clone());
+            }
+        }
+
+        Some(target)
+    }
+
+    fn edges(&self) -> Edges {
+        let mut edges = Edges::new();
+
+        for (scope, path) in
+            self.paths
+                .iter()
+                .cloned()
+                .chain(self.scopes.iter().enumerate().flat_map(|(scope, item)| {
+                    item.imports
+                        .iter()
+                        .map(move |import| (scope, import.path.clone()))
+                }))
+        {
+            let mut owners = BTreeSet::new();
+            if let Some(target) = self.resolve(scope, &path, &mut BTreeSet::new(), &mut owners) {
+                owners.insert(target);
+
+                for mut target in owners {
+                    while !self.modules.contains_key(&target) {
+                        target.pop();
+                    }
+
+                    let source = &self.scopes[scope].module;
+                    if source != &target {
+                        edges.insert((source.clone(), target));
+                    }
+                }
+            }
+        }
+
+        edges
+    }
+
+    fn misplaced_implementations(&self) -> BTreeSet<(Name, Name)> {
+        self.implementations
+            .iter()
+            .filter_map(|(scope, path)| {
+                let mut target =
+                    self.resolve(*scope, path, &mut BTreeSet::new(), &mut BTreeSet::new())?;
+                let mut seen = BTreeSet::new();
+
+                while let Some((scope, path)) = self.type_aliases.get(&target) {
+                    if !seen.insert(target.clone()) {
+                        return None;
+                    }
+                    target =
+                        self.resolve(*scope, path, &mut BTreeSet::new(), &mut BTreeSet::new())?;
+                }
+
+                let source = &self.scopes[*scope].module;
+
+                (self.types.contains(&target) && source != &target[..target.len() - 1])
+                    .then(|| (source.clone(), target))
+            })
+            .collect()
+    }
+}
+
+struct PathCollector<'a> {
+    graph: &'a mut SourceGraph,
+    scope: usize,
+}
+
+impl<'ast> Visit<'ast> for PathCollector<'_> {
+    // pub(crate)/pub(super) restrict visibility; they do not use an ancestor.
+    fn visit_visibility(&mut self, _: &'ast syn::Visibility) {}
+
+    fn visit_item(&mut self, item: &'ast syn::Item) {
+        if !is_excluded_item(item) {
+            visit::visit_item(self, item);
+        }
+    }
+
+    fn visit_item_mod(&mut self, _: &'ast syn::ItemMod) {}
+
+    fn visit_item_use(&mut self, _: &'ast syn::ItemUse) {}
+
+    fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+        if let syn::Type::Path(type_path) = item.self_ty.as_ref()
+            && type_path.qself.is_none()
+            && type_path.path.leading_colon.is_none()
+        {
+            self.graph.implementations.push((
+                self.scope,
+                type_path
+                    .path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect(),
+            ));
+        }
+
+        visit::visit_item_impl(self, item);
+    }
+
+    fn visit_path(&mut self, path: &'ast syn::Path) {
+        // Leading :: denotes an external crate in Rust 2018+, not this crate.
+        if path.leading_colon.is_none() {
+            self.graph.paths.push((
+                self.scope,
+                path.segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect(),
+            ));
+        }
+
+        visit::visit_path(self, path);
+    }
+
+    fn visit_block(&mut self, block: &'ast syn::Block) {
+        let items: Vec<_> = block
+            .stmts
+            .iter()
+            .filter_map(|statement| {
+                if let syn::Stmt::Item(item) = statement {
+                    Some(item.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let previous_scope = self.scope;
+        self.scope = self.graph.add_scope(
+            self.graph.scopes[previous_scope].module.clone(),
+            Some(previous_scope),
+            &items,
+        );
+
+        visit::visit_block(self, block);
+
+        self.scope = previous_scope;
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Violation {
+    Ancestor(Name, Name),
+    Cycle(Name, Name),
+}
+
+fn violations(edges: &Edges) -> BTreeSet<Violation> {
+    let mut errors = BTreeSet::new();
+
+    for (source, target) in edges {
+        if source.starts_with(target) {
+            errors.insert(Violation::Ancestor(source.clone(), target.clone()));
+        }
+
+        let mut pending = vec![target];
+        let mut seen = BTreeSet::new();
+
+        while let Some(node) = pending.pop() {
+            if node == source {
+                errors.insert(Violation::Cycle(source.clone(), target.clone()));
+                break;
+            }
+
+            if seen.insert(node) {
+                pending.extend(
+                    edges
+                        .iter()
+                        .filter_map(|(from, to)| (from == node).then_some(to)),
+                );
+            }
+        }
+    }
+
+    errors
+}
+
+fn layer_violations(edges: &Edges) -> Edges {
+    let mut errors = Edges::new();
+
+    for (source, target) in edges {
+        let forbidden: &[&str] = match source.first().map(String::as_str) {
+            Some("doctor") => &["scan", "output", "manifest"],
+            Some("scan") => &["config", "plan"],
+            Some("manifest") => &["output"],
+            Some("collectors" | "backend") => &[
+                "main", "cli", "scan", "config", "plan", "output", "manifest",
+            ],
+            Some("collection") => &[
+                "main",
+                "cli",
+                "scan",
+                "doctor",
+                "collectors",
+                "backend",
+                "process",
+                "config",
+                "plan",
+                "output",
+                "manifest",
+            ],
+            Some("process") => {
+                if !target.starts_with(&name("process")) {
+                    errors.insert((source.clone(), target.clone()));
+                }
+                continue;
+            }
+            _ => continue,
+        };
+
+        let mut pending = vec![target];
+        let mut seen = BTreeSet::new();
+
+        while let Some(node) = pending.pop() {
+            if !seen.insert(node) {
+                continue;
+            }
+
+            let layer = node.first().map_or("main", String::as_str);
+
+            if forbidden.contains(&layer) {
+                errors.insert((source.clone(), node.clone()));
+            }
+
+            pending.extend(
+                edges
+                    .iter()
+                    .filter_map(|(from, to)| (from == node).then_some(to)),
+            );
+        }
+    }
+
+    errors
+}
+
+#[test]
+fn production_dependencies_have_no_ancestors_or_cycles() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs");
+    let graph = SourceGraph::load(&root, &|path| {
+        std::fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))
+    })
+    .expect("parse production module tree");
+
+    for scope in &graph.scopes {
+        for import in &scope.imports {
+            assert!(
+                !import
+                    .path
+                    .first()
+                    .is_some_and(|segment| segment == "super"),
+                "production imports must use explicit internal paths: {} imports {}",
+                scope.module.join("::"),
+                import.path.join("::")
+            );
+        }
+    }
+
+    assert_eq!(violations(&graph.edges()), BTreeSet::new());
+    assert_eq!(graph.misplaced_implementations(), BTreeSet::new());
+    assert_eq!(layer_violations(&graph.edges()), BTreeSet::new());
+}
+
+fn name(path: &str) -> Name {
+    if path == "main" {
+        Vec::new()
+    } else {
+        path.split("::").map(str::to_owned).collect()
+    }
+}
+
+fn fixture(files: &[(&str, &str)]) -> SourceGraph {
+    let files: BTreeMap<_, _> = files
+        .iter()
+        .map(|(path, source)| (PathBuf::from(path), source.to_string()))
+        .collect();
+
+    SourceGraph::load(Path::new("src/main.rs"), &|path| {
+        files
+            .get(path)
+            .cloned()
+            .ok_or_else(|| format!("missing fixture {}", path.display()))
+    })
+    .expect("parse test-owned module tree")
+}
+
+fn expected_edges(pairs: &[(&str, &str)]) -> Edges {
+    pairs
+        .iter()
+        .map(|(from, to)| (name(from), name(to)))
+        .collect()
+}
+
+#[test]
+fn module_ownership_is_not_a_dependency_and_tests_are_excluded() {
+    let graph = fixture(&[
+        (
+            "src/main.rs",
+            "mod parent; #[cfg(test)] mod tests { use crate::parent; } mod behavior_tests;",
+        ),
+        ("src/parent.rs", "mod child;"),
+        (
+            "src/parent/child.rs",
+            "pub(crate) struct Leaf; pub(super) fn run() {}",
+        ),
+    ]);
+
+    assert_eq!(
+        graph.modules.keys().cloned().collect::<BTreeSet<_>>(),
+        [name("main"), name("parent"), name("parent::child")]
+            .into_iter()
+            .collect()
+    );
+    assert_eq!(graph.edges(), Edges::new());
+}
+
+#[test]
+fn qualified_relative_and_root_items_detect_all_ancestors() {
+    let graph = fixture(&[(
+        "src/main.rs",
+        r#"
+        fn root_item() {}
+        mod parent {
+            pub struct Contract;
+            mod child {
+                fn run(_: super::Contract, _: crate::parent::Contract) {
+                    crate::root_item();
+                }
+                mod leaf { fn run(_: super::super::Contract) {} }
+            }
+        }
+    "#,
+    )]);
+    let edges = expected_edges(&[
+        ("parent::child", "parent"),
+        ("parent::child", "main"),
+        ("parent::child::leaf", "parent"),
+    ]);
+
+    assert_eq!(graph.edges(), edges);
+    assert_eq!(
+        violations(&edges),
+        [
+            Violation::Ancestor(name("parent::child"), name("parent")),
+            Violation::Ancestor(name("parent::child"), name("main")),
+            Violation::Ancestor(name("parent::child::leaf"), name("parent")),
+        ]
+        .into_iter()
+        .collect()
+    );
+}
+
+#[test]
+fn nested_use_trees_aliases_reexports_and_globs_resolve_to_owners() {
+    let graph = fixture(&[(
+        "src/main.rs",
+        r#"
+        mod contracts { pub struct Contract; }
+        mod facade { pub use crate::contracts::{self as original, Contract as Export}; }
+        mod consumer {
+            use crate::{facade::{self as api, Export as Local}, contracts::*};
+            fn run(_: Local, _: Contract, _: api::original::Contract) {
+                use crate::contracts as inside;
+                let _: inside::Contract;
+            }
+        }
+    "#,
+    )]);
+
+    assert_eq!(
+        graph.edges(),
+        expected_edges(&[
+            ("facade", "contracts"),
+            ("consumer", "facade"),
+            ("consumer", "contracts"),
+        ])
+    );
+    assert!(violations(&graph.edges()).is_empty());
+}
+
+#[test]
+fn imported_ancestor_aliases_and_globs_are_dependencies_even_when_unused() {
+    let graph = fixture(&[(
+        "src/main.rs",
+        r#"
+        struct Root;
+        mod parent {
+            pub struct Contract;
+            mod child {
+                use super::{self as owner, Contract as Alias};
+                use owner::*;
+                use crate::Root as RootAlias;
+                fn run(_: Alias, _: RootAlias) {}
+            }
+        }
+    "#,
+    )]);
+
+    assert_eq!(
+        graph.edges(),
+        expected_edges(&[("parent::child", "parent"), ("parent::child", "main")])
+    );
+    assert_eq!(violations(&graph.edges()).len(), 2);
+}
+
+#[test]
+fn ancestor_reexports_cannot_hide_dependencies_on_their_owner() {
+    let graph = fixture(&[(
+        "src/main.rs",
+        r#"
+        mod parent {
+            pub use self::child::Contract as Export;
+            mod child {
+                pub struct Contract;
+                fn run(_: super::Export) {}
+            }
+        }
+    "#,
+    )]);
+
+    assert_eq!(
+        graph.edges(),
+        expected_edges(&[("parent", "parent::child"), ("parent::child", "parent"),])
+    );
+    assert_eq!(
+        violations(&graph.edges()),
+        [
+            Violation::Ancestor(name("parent::child"), name("parent")),
+            Violation::Cycle(name("parent"), name("parent::child")),
+            Violation::Cycle(name("parent::child"), name("parent")),
+        ]
+        .into_iter()
+        .collect()
+    );
+}
+
+#[test]
+fn detects_direct_and_indirect_cycles_from_actual_paths() {
+    let direct = fixture(&[(
+        "src/main.rs",
+        r#"
+        mod a { pub struct A; fn run(_: crate::b::B) {} }
+        mod b { pub struct B; use crate::a::A as Other; }
+    "#,
+    )]);
+
+    assert_eq!(
+        violations(&direct.edges()),
+        [
+            Violation::Cycle(name("a"), name("b")),
+            Violation::Cycle(name("b"), name("a")),
+        ]
+        .into_iter()
+        .collect()
+    );
+
+    let indirect = fixture(&[(
+        "src/main.rs",
+        r#"
+        mod a { pub struct A; use crate::b::*; }
+        mod b { pub struct B; fn run(_: crate::c::C) {} }
+        mod c { pub struct C; use crate::a as back; fn run(_: back::A) {} }
+    "#,
+    )]);
+
+    assert_eq!(
+        violations(&indirect.edges()),
+        [
+            Violation::Cycle(name("a"), name("b")),
+            Violation::Cycle(name("b"), name("c")),
+            Violation::Cycle(name("c"), name("a")),
+        ]
+        .into_iter()
+        .collect()
+    );
+}
+
+#[test]
+fn external_paths_comments_and_strings_do_not_create_dependencies() {
+    let graph = fixture(&[(
+        "src/main.rs",
+        r#"
+        extern crate dependency;
+        mod process { pub struct Output; }
+        mod leaf {
+            use std::process as process;
+            use std::collections::*;
+            use ::process as external_process;
+            extern crate other as another_external;
+            fn run(_: process::Output, _: ::process::Output,
+                   _: external_process::Output, _: another_external::Output,
+                   _: crate::dependency::Output) {
+                let _ = "crate::process::Output";
+                // crate::process::Output
+            }
+        }
+    "#,
+    )]);
+
+    assert_eq!(graph.edges(), Edges::new());
+}
+
+#[test]
+fn cfg_test_items_do_not_add_production_edges() {
+    let graph = fixture(&[(
+        "src/main.rs",
+        r#"
+        struct Root;
+        mod production {
+            #[cfg(test)] struct TestOnly(crate::Root);
+            #[cfg(test)] fn helper(_: crate::Root) {}
+            #[test] fn example() { crate::root_item(); }
+            #[cfg(all(test, unix))] mod nested { use crate::Root; }
+        }
+        fn root_item() {}
+    "#,
+    )]);
+
+    assert_eq!(graph.edges(), Edges::new());
+    assert_eq!(graph.modules.len(), 2);
+}
+
+#[test]
+fn follows_flat_directory_inline_and_explicit_path_modules() {
+    let graph = fixture(&[
+        (
+            "src/main.rs",
+            "mod flat; mod directory; #[path = \"custom.rs\"] mod renamed; mod inline { mod child; }",
+        ),
+        ("src/flat.rs", "mod child;"),
+        ("src/flat/child.rs", "use crate::renamed::Contract;"),
+        ("src/directory/mod.rs", "mod child;"),
+        ("src/directory/child.rs", "use crate::renamed::Contract;"),
+        ("src/custom.rs", "pub struct Contract;"),
+        ("src/inline/child.rs", "use crate::renamed::Contract;"),
+    ]);
+
+    assert_eq!(
+        graph.edges(),
+        expected_edges(&[
+            ("flat::child", "renamed"),
+            ("directory::child", "renamed"),
+            ("inline::child", "renamed"),
+        ])
+    );
+}
+
+#[test]
+fn inherent_and_trait_impls_stay_with_the_struct_or_enum_owner() {
+    let graph = fixture(&[
+        (
+            "src/main.rs",
+            r#"
+            mod owner;
+            mod facade { pub use crate::owner::{Record as Export, State}; }
+            mod inherent;
+            mod traits;
+            mod aliases {
+                type LocalAlias = crate::facade::Export<u16>;
+                type AliasChain = LocalAlias;
+                impl AliasChain {}
+            }
+            mod inline {
+                impl crate::owner::Record<u8> {}
+            }
+            "#,
+        ),
+        (
+            "src/owner.rs",
+            r#"
+            pub struct Record<T>(T);
+            pub enum State { Ready }
+            impl<T> Record<T> {}
+            impl std::fmt::Display for State {}
+            #[cfg(test)] mod tests {
+                impl crate::facade::Export<u8> {}
+            }
+            "#,
+        ),
+        (
+            "src/inherent.rs",
+            r#"
+            use crate::facade::Export as Alias;
+            impl<T> Alias<T> {}
+            fn helper() {
+                use crate::facade::*;
+                impl State {}
+            }
+            "#,
+        ),
+        (
+            "src/traits.rs",
+            r#"
+            use crate::facade::*;
+            impl std::fmt::Display for Export<u8> {}
+            impl std::fmt::Display for State {}
+            #[cfg(test)] impl crate::owner::Record<u16> {}
+            "#,
+        ),
+    ]);
+
+    assert_eq!(
+        graph.misplaced_implementations(),
+        [
+            (name("aliases"), name("owner::Record")),
+            (name("inline"), name("owner::Record")),
+            (name("inherent"), name("owner::Record")),
+            (name("inherent"), name("owner::State")),
+            (name("traits"), name("owner::Record")),
+            (name("traits"), name("owner::State")),
+        ]
+        .into_iter()
+        .collect()
+    );
+}
+
+#[test]
+fn inline_child_cannot_implement_its_parents_type_even_in_the_same_file() {
+    let graph = fixture(&[(
+        "src/main.rs",
+        r#"
+        mod owner {
+            pub struct Record;
+            mod child { impl super::Record {} }
+        }
+        "#,
+    )]);
+
+    assert_eq!(
+        graph.misplaced_implementations(),
+        [(name("owner::child"), name("owner::Record"))]
+            .into_iter()
+            .collect()
+    );
+}
+
+#[test]
+fn local_impls_and_external_types_are_not_misplaced() {
+    let graph = fixture(&[(
+        "src/main.rs",
+        r#"
+        struct Root;
+        impl Root {}
+        mod owner {
+            pub struct Record;
+            pub enum State { Ready }
+            impl Record {}
+            impl std::fmt::Display for Record {}
+            impl State {}
+            impl std::fmt::Display for State {}
+            struct Vec;
+            impl ::std::vec::Vec<u8> {}
+            use std::vec::Vec as External;
+            impl External<u8> {}
+        }
+        "#,
+    )]);
+
+    assert!(graph.misplaced_implementations().is_empty());
+}
+
+#[test]
+fn critical_layers_reject_dependencies_including_descendant_modules() {
+    for (source, forbidden) in [
+        ("doctor", vec!["scan", "output", "manifest"]),
+        ("scan", vec!["config", "plan"]),
+        ("manifest", vec!["output"]),
+        (
+            "collectors",
+            vec!["cli", "scan", "config", "plan", "output", "manifest"],
+        ),
+        (
+            "backend",
+            vec!["cli", "scan", "config", "plan", "output", "manifest"],
+        ),
+        (
+            "collection",
+            vec![
+                "cli",
+                "scan",
+                "doctor",
+                "collectors",
+                "backend",
+                "process",
+                "config",
+                "plan",
+                "output",
+                "manifest",
+            ],
+        ),
+        (
+            "process",
+            vec!["job", "collection", "json", "path_encoding"],
+        ),
+    ] {
+        for target in forbidden {
+            let source_text = format!(
+                "mod {source} {{ mod leaf {{ use crate::{target}::nested::Item as Alias; }} }}
+                 mod {target} {{ pub mod nested {{ pub struct Item; }} }}"
+            );
+            let graph = fixture(&[("src/main.rs", &source_text)]);
+
+            assert_eq!(
+                layer_violations(&graph.edges()),
+                expected_edges(&[(&format!("{source}::leaf"), &format!("{target}::nested"),)]),
+                "{source} must not depend on {target}"
+            );
+        }
+    }
+}
+
+#[test]
+fn cli_root_and_transitive_facades_cannot_bypass_layer_rules() {
+    for source in ["collectors", "backend", "collection", "process"] {
+        let source_text = format!("struct Args; mod {source} {{ fn run(_: crate::Args) {{}} }}");
+        let graph = fixture(&[("src/main.rs", &source_text)]);
+
+        assert_eq!(
+            layer_violations(&graph.edges()),
+            expected_edges(&[(source, "main")])
+        );
+    }
+
+    let graph = fixture(&[(
+        "src/main.rs",
+        r#"
+        mod doctor { use crate::facade::Export; }
+        mod facade { pub use crate::scan::Work as Export; }
+        mod scan { pub struct Work; }
+        "#,
+    )]);
+
+    assert_eq!(
+        layer_violations(&graph.edges()),
+        expected_edges(&[("doctor", "scan")])
+    );
+
+    let graph = fixture(&[(
+        "src/main.rs",
+        r#"
+        mod doctor { fn check() { crate::bridge::check(); } }
+        mod bridge { pub fn check() { crate::scan::run(); } }
+        mod scan { pub fn run() {} }
+        "#,
+    )]);
+
+    assert_eq!(
+        layer_violations(&graph.edges()),
+        expected_edges(&[("doctor", "scan")])
+    );
+}
+
+#[test]
+fn readiness_can_reach_process_and_lower_layers_can_share_data() {
+    let graph = fixture(&[(
+        "src/main.rs",
+        r#"
+        mod doctor { use crate::collectors::check; }
+        mod collectors {
+            pub fn check() { crate::process::check(); }
+            mod backend {
+                use crate::job::Job;
+                use crate::collection::outcome::Outcome;
+            }
+        }
+        mod process {
+            pub fn check() {}
+            mod internal { pub fn helper() {} }
+            fn run() { internal::helper(); }
+        }
+        mod job { pub struct Job; }
+        mod collection {
+            pub mod outcome { pub struct Outcome; }
+            #[cfg(test)] mod tests { use crate::scan::run; }
+        }
+        mod scan { pub fn run() {} }
+        "#,
+    )]);
+
+    assert!(layer_violations(&graph.edges()).is_empty());
+}

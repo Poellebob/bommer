@@ -4,37 +4,57 @@ version := env('VERSION', '0.1.0-dev')
 default:
     @just --list
 
-# Format Go source and tests.
+# Format Rust source and tests.
 fmt:
-    gofmt -w cmd internal
+    cargo fmt --all
 
 # Check formatting without changing files.
 fmt-check:
-    @unformatted="$(gofmt -l cmd internal)"; if [ -n "$unformatted" ]; then printf '%s\n' "$unformatted"; exit 1; fi
+    cargo fmt --all -- --check
 
-# Run Go's static analysis.
+# Run strict Rust static analysis (including tests).
 vet:
-    go vet ./...
+    cargo clippy --locked --all-targets -- -D warnings
 
-# Run tests with the race detector.
+# Run binary-module tests and black-box CLI tests.
 test:
-    go test -race ./...
+    cargo test --locked
+
+# Run the same suite against the portable native-package target.
+portable-test:
+    cargo test --locked --target x86_64-unknown-linux-musl
 
 # Test embedded CycloneDX schemas, fixtures, and offline validation.
 schema-test:
-    go test -race ./internal/bom
+    cargo test --locked --bin bommer bom::
+    cargo test --locked --bin bommer json::tests::
 
-# Run integration fixtures; live Nix requires an explicit BOMMER_TEST_NIX_ROOT.
+# Run integration fixtures with fake collectors/Nix, not live host inventory.
 integration-test:
-    go test -race -count=1 -v -run 'Test.*Integration|^TestNixLive$' ./...
+    cargo test --locked --bin bommer job::tests:: -- --nocapture
+    cargo test --locked --bin bommer collectors::external::tests:: -- --nocapture
+    cargo test --locked --bin bommer collectors::certificates::tests:: -- --nocapture
+    cargo test --locked --bin bommer collectors::nix::tests:: -- --nocapture
+    cargo test --locked --bin bommer collectors::import::tests:: -- --nocapture
+    cargo test --locked --test cli
+    cargo test --locked --bin bommer process::tests:: -- --nocapture
+    cargo test --locked --bin bommer doctor::tests:: -- --nocapture
+    cargo test --locked --bin bommer scan::tests:: -- --nocapture
+    cargo test --locked --bin bommer output::tests:: -- --nocapture
+    cargo test --locked --bin bommer manifest::tests:: -- --nocapture
+
+# Check module dependency direction and the architecture checker fixtures.
+architecture-test:
+    cargo test --locked --test architecture
 
 # Run all source checks and tests.
 check: fmt-check vet test
 
-# Build a standalone Linux executable.
+# Build a static Linux executable without a Nix-store runtime dependency.
 build:
+    cargo build --locked --release --target x86_64-unknown-linux-musl --bin bommer
     mkdir -p dist
-    CGO_ENABLED=0 go build -trimpath -o dist/bommer ./cmd/bommer
+    install -m 0755 target/x86_64-unknown-linux-musl/release/bommer dist/bommer
 
 # Build a Debian package. Override the version with VERSION.
 deb: build
