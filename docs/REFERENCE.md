@@ -299,8 +299,16 @@ example, `VERSION=0.1.0 just deb`. They build the CLI before packaging it.
 
 The flake wraps Bommer with Syft, Git, and Nix. Native packages currently contain the CLI,
 disabled example configuration, and systemd units, **not collector binaries**;
-provision those explicitly. Native binaries use static `x86_64-unknown-linux-musl`
-builds, not a copied Nix-linked executable. Packages do not enable or start scanning on installation.
+provision those explicitly. Both the `.deb` and the `.rpm` declare a weak
+`Recommends: syft` dependency: where distro repositories package syft (Debian
+unstable, Kali, openSUSE Tumbleweed and Leap backports, Ubuntu 27.04 and
+newer), the package manager installs it automatically. Fedora, RHEL/EPEL,
+older Ubuntu releases, and Debian stable do not package syft: Anchore does
+not host an apt/yum repository, so install their `.deb`/`.rpm` from the
+[releases page](https://github.com/anchore/syft/releases) beforehand, or
+mirror both packages in a self-hosted apt/yum repository so resolution is
+automatic. `bommer doctor` verifies the backend at runtime either way.
+Native binaries use static `x86_64-unknown-linux-musl` builds, not a copied Nix-linked executable. Packages do not enable or start scanning on installation.
 The service uses a dynamic unprivileged user, so inaccessible scopes fail or may
 yield incomplete collector evidence. Privileged hardware probes require a
 deliberate administrator policy change.

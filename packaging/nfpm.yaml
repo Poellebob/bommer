@@ -6,6 +6,9 @@ maintainer: Bommer contributors
 description: Configurable Linux HBOM, SBOM, and application CBOM orchestration
 homepage: https://codeberg.org/Poellebob/bommer
 
+recommends:
+  - syft
+
 contents:
   - src: ./dist/bommer
     dst: /usr/bin/bommer

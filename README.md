@@ -16,7 +16,11 @@ a deferred proof of concept, not implemented.
 ## Quick Start
 
 You need Git, [Nix](https://nixos.org/download/) with flakes enabled.
-> deb and rpm is being worked on.
+> deb and rpm is being worked on. They bundle no collectors and declare a
+> weak `Recommends: syft` dependency; where distro repositories do not
+> package syft, install Anchore's `.deb`/`.rpm` from
+> [their releases](https://github.com/anchore/syft/releases) first.
+> See the [packaging notes](docs/REFERENCE.md#packaging).
 
 ```sh
 git clone https://codeberg.org/Poellebob/bommer.git
